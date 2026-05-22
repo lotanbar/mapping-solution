@@ -13,6 +13,8 @@ import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.sqrt
 
+private const val QUOTA_RESET_WINDOW_MS = 24L * 60 * 60 * 1000   // 24 h circuit-breaker window
+
 @Singleton
 class GooglePlacesRepository @Inject constructor(
     private val api: PlacesApiService,
@@ -25,6 +27,10 @@ class GooglePlacesRepository @Inject constructor(
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    private val _isQuotaExhausted = MutableStateFlow(false)
+    val isQuotaExhausted: StateFlow<Boolean> = _isQuotaExhausted.asStateFlow()
+
+    @Volatile private var quotaExhaustedUntil: Long = 0L
     @Volatile private var lastFetchedBounds: FetchedBounds? = null
     @Volatile private var lastFetchedZoom: Double? = null
 
@@ -76,6 +82,11 @@ class GooglePlacesRepository @Inject constructor(
         west: Double,
         zoom: Double,
     ) = withContext(Dispatchers.IO) {
+        // Circuit breaker: stop all calls while quota is exhausted.
+        if (System.currentTimeMillis() < quotaExhaustedUntil) {
+            Log.w("GooglePlacesRepo", "Quota exhausted — skipping fetch until reset")
+            return@withContext
+        }
         try {
             _isLoading.value = true
 
@@ -129,10 +140,17 @@ class GooglePlacesRepository @Inject constructor(
                         (halfLatDeg * 111_000).let { it * it } +
                         (halfLngDeg * 111_000 * cos(Math.toRadians(stripCenterLat))).let { it * it }
                     )
-                    val stripPois = runCatching {
-                        api.fetchNearby(stripCenterLat, stripCenterLng, radiusMeters, maxPerStrip)
-                    }.getOrElse { e -> Log.e("GooglePlacesRepo", "Strip fetch failed", e); emptyList() }
-                    allStripPois += stripPois
+                    try {
+                        val cappedRadius = radiusMeters.coerceAtMost(50_000.0)
+                        allStripPois += api.fetchNearby(stripCenterLat, stripCenterLng, cappedRadius, maxPerStrip)
+                    } catch (e: QuotaExceededException) {
+                        Log.w("GooglePlacesRepo", "Quota exhausted — activating circuit breaker for 24 h")
+                        quotaExhaustedUntil = System.currentTimeMillis() + QUOTA_RESET_WINDOW_MS
+                        _isQuotaExhausted.value = true
+                        break
+                    } catch (e: Exception) {
+                        Log.e("GooglePlacesRepo", "Strip fetch failed", e)
+                    }
                 }
             }
 

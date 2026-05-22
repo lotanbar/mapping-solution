@@ -105,6 +105,8 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
         val body = "data=${java.net.URLEncoder.encode(query, "UTF-8")}".toRequestBody(formMediaType)
         val request = Request.Builder()
             .url(overpassUrl)
+            .addHeader("Accept", "*/*")
+            .addHeader("User-Agent", "MappingSolution/1.0")
             .post(body)
             .build()
 

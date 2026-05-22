@@ -165,7 +165,6 @@ fun LibraryScreen(
     var showAllFilesDialog by remember { mutableStateOf(false) }
     var showFolderPicker by remember { mutableStateOf(false) }
     var showGpxFilePicker by remember { mutableStateOf(false) }
-    var showImportChoiceDialog by remember { mutableStateOf(false) }
 
     val allFilesSettingsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -231,29 +230,15 @@ fun LibraryScreen(
                 viewModel.importSingleGpxFile(file.absolutePath)
                 showGpxFilePicker = false
             },
+            onFolderSelected = { folder ->
+                viewModel.importFromFolder(folder.absolutePath)
+                showGpxFilePicker = false
+            },
             onDismiss = { showGpxFilePicker = false },
         )
     }
 
-    if (showImportChoiceDialog) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showImportChoiceDialog = false },
-            title = { Text("Import GPX") },
-            text = { Text("Choose how to import your GPX data:") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showImportChoiceDialog = false
-                    showFolderPicker = true
-                }) { Text("Select Folder") }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    showImportChoiceDialog = false
-                    showGpxFilePicker = true
-                }) { Text("Select Single File") }
-            },
-        )
-    }
+
 
     // Observe export URI and fire the share chooser
     LaunchedEffect(Unit) {
@@ -633,7 +618,7 @@ fun LibraryScreen(
                         title = "POIs",
                         isLoading = isImporting,
                         onAction = {
-                            if (hasAllFilesPermission) showImportChoiceDialog = true
+                            if (hasAllFilesPermission) showGpxFilePicker = true
                             else showAllFilesDialog = true
                         },
                     )

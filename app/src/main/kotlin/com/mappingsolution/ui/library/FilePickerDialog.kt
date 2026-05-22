@@ -35,14 +35,17 @@ import androidx.compose.ui.window.Dialog
 import java.io.File
 
 /**
- * A filesystem-browsing dialog that lets the user pick a file matching [fileExtension].
+ * A filesystem-browsing dialog that lets the user pick a file matching [fileExtension]
+ * OR select the current folder via the "Use this folder" button.
  * Directories are navigable; matching files are selectable.
+ * [onFolderSelected] is called when the user taps "Use this folder".
  */
 @Composable
 fun FilePickerDialog(
     initialPath: String,
     fileExtension: String,
     onFileSelected: (File) -> Unit,
+    onFolderSelected: ((File) -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val startDir = remember(initialPath) {
@@ -155,9 +158,12 @@ fun FilePickerDialog(
                 HorizontalDivider()
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     TextButton(onClick = onDismiss) { Text("Cancel") }
+                    if (onFolderSelected != null) {
+                        TextButton(onClick = { onFolderSelected(currentDir) }) { Text("Use this folder") }
+                    }
                 }
             }
         }

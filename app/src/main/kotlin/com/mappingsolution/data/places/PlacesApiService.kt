@@ -58,6 +58,7 @@ class PlacesApiService @Inject constructor(private val httpClient: OkHttpClient)
 
         return runCatching {
             httpClient.newCall(request).execute().use { response ->
+                if (response.code == 429) throw QuotaExceededException("Google Places daily quota exhausted")
                 if (!response.isSuccessful) {
                     Log.e("PlacesApiService", "HTTP ${response.code}: ${response.body?.string()}")
                     return@runCatching emptyList()
@@ -89,6 +90,7 @@ class PlacesApiService @Inject constructor(private val httpClient: OkHttpClient)
                 }
             }
         }.getOrElse { e ->
+            if (e is QuotaExceededException) throw e
             Log.e("PlacesApiService", "fetchNearby failed", e)
             emptyList()
         }

@@ -97,6 +97,17 @@ fun MainScreen(
     val hillshadeVisible by viewModel.hillshadeVisible.collectAsState()
     val rasterLayers by viewModel.rasterLayers.collectAsState()
     val searchPreviewLocation by viewModel.searchPreviewLocation.collectAsState()
+    val googleQuotaExhausted by viewModel.googlePlacesRepository.isQuotaExhausted.collectAsState()
+
+    LaunchedEffect(googleQuotaExhausted) {
+        if (googleQuotaExhausted) {
+            android.widget.Toast.makeText(
+                context,
+                "Google POIs unavailable: daily API quota reached. They'll return tomorrow.",
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
 
     // Viewport allocation: 20 Google + 20 Overpass/Imported (40 total).
     // Imported claims up to 10 of the 20 Overpass slots; Overpass gets the remainder.
