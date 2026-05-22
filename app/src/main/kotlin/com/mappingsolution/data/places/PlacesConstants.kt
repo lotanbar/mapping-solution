@@ -53,11 +53,9 @@ const val GOOGLE_PLACES_GROUP_ID = "google-places-group"
 const val OSM_POI_GROUP_ID = "osm-poi-group"
 
 // Zoom threshold — applies to BOTH sources
-// At zoom 13 the viewport is ~4 km wide: POIs are meaningful and strip radii stay under 50 km.
-// Below this zoom the map is too zoomed-out for individual POIs to be useful.
-const val NEARBY_POI_MIN_ZOOM = 13.0
+const val NEARBY_POI_MIN_ZOOM = 8.0
 
-const val GOOGLE_PLACES_FETCH_DEBOUNCE_MS = 1500L
+const val GOOGLE_PLACES_FETCH_DEBOUNCE_MS = 800L
 const val GOOGLE_PLACES_MAX_RESULTS = 20     // Google POIs shown per viewport (one API page)
 const val GOOGLE_PLACES_CACHE_TTL_MS = 7L * 24 * 60 * 60 * 1000   // 7 days
 const val GOOGLE_PLACES_FIELD_MASK = "places.id,places.displayName,places.location,places.types"
