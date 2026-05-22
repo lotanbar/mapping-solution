@@ -180,6 +180,141 @@ class ImportRepository @Inject constructor(
         )
     }
 
+    /**
+     * Imports a single GPX file without requiring a dedicated folder.
+     * Uses the file's basename as the group name and checks for an `images/` directory
+     * next to the file (same resolution logic as [importFolder]).
+     */
+    suspend fun importSingleFile(
+        filePath: String,
+        onProgress: suspend (phase: String, done: Int, total: Int) -> Unit = { _, _, _ -> },
+    ): ImportResult = withContext(Dispatchers.IO) {
+        val file = File(filePath)
+        if (!file.isFile || file.extension.lowercase() != "gpx") {
+            return@withContext ImportResult(
+                errors = listOf("Not a valid GPX file: ${file.name}")
+            )
+        }
+        val groupName = file.nameWithoutExtension.takeIf { it.isNotEmpty() } ?: "Import"
+        val imagesDir = File(file.parentFile, "images").takeIf { it.isDirectory }
+
+        var skipped = 0
+        val errors = mutableListOf<String>()
+        val allPois = mutableListOf<Poi>()
+        val allRoutes = mutableListOf<Pair<Route, List<RoutePoint>>>()
+
+        onProgress("Reading GPX file…", 0, 0)
+        var lastParseEmit = 0L
+        try {
+            file.inputStream().use { stream ->
+                parseGpx(stream, allPois, allRoutes) { count ->
+                    val now = System.currentTimeMillis()
+                    if (now - lastParseEmit >= 32) {
+                        lastParseEmit = now
+                        onProgress("Reading GPX file… $count waypoints found", 0, 0)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            errors.add("${file.name}: ${e.message ?: "parse error"}")
+            skipped++
+        }
+
+        if (allPois.isNotEmpty()) {
+            onProgress("Validating…", 0, 0)
+            val validationErrors = mutableListOf<String>()
+            for ((i, poi) in allPois.withIndex()) {
+                val rowLabel = "Waypoint ${i + 1} (\"${poi.name}\")"
+                if (poi.lat !in -90.0..90.0)
+                    validationErrors.add("$rowLabel: latitude ${poi.lat} out of range [-90, 90]")
+                if (poi.lng !in -180.0..180.0)
+                    validationErrors.add("$rowLabel: longitude ${poi.lng} out of range [-180, 180]")
+            }
+            if (validationErrors.isNotEmpty()) {
+                Log.w("ImportRepository", "Single-file validation failed: ${validationErrors.size} error(s)")
+                validationErrors.forEach { Log.w("ImportRepository", "  • $it") }
+                return@withContext ImportResult(
+                    filesSkipped = skipped,
+                    errors = errors,
+                    validationErrors = validationErrors,
+                )
+            }
+        }
+
+        var routesCount = 0
+
+        if (allPois.isNotEmpty()) {
+            val groupId = groupRepository.purgeAndCreateForImport(groupName, poiRepository) { phase, done, total ->
+                onProgress(phase, done, total)
+            }
+            val total = allPois.size
+            val imageIndex = imagesDir?.let { buildImageIndex(it) } ?: emptyMap()
+            val resolvedPois = allPois.map { poi ->
+                if (imagesDir == null || poi.mediaPaths.isEmpty()) return@map poi
+                val resolvedPaths = poi.mediaPaths.map { filename ->
+                    resolveImageFile(imagesDir, filename, imageIndex)?.name ?: filename
+                }
+                poi.copy(mediaPaths = resolvedPaths)
+            }
+            val bulkFile = storageManager.getBulkPoisFile(groupName.trim(), groupId)
+            bulkFile.parentFile?.mkdirs()
+            onProgress("Writing to storage…", 0, total)
+            var lastEmit = 0L
+            bulkFile.bufferedWriter().use { writer ->
+                for ((i, poi) in resolvedPois.withIndex()) {
+                    writer.write(BulkPoiRepository.serializePoi(poi.copy(groupId = groupId)))
+                    writer.newLine()
+                    val now = System.currentTimeMillis()
+                    if (now - lastEmit >= 32 || i == total - 1) {
+                        lastEmit = now
+                        onProgress("Writing to storage…", i + 1, total)
+                    }
+                }
+            }
+            if (imagesDir != null) {
+                val poisWithImages = resolvedPois.filter { it.mediaPaths.isNotEmpty() }
+                onProgress("Copying images…", 0, poisWithImages.size)
+                var doneCount = 0
+                for (poi in poisWithImages) {
+                    val destDir = storageManager.getPoiMediaDir(poi.name, poi.id)
+                    destDir.mkdirs()
+                    for (filename in poi.mediaPaths) {
+                        val srcFile = File(imagesDir, filename).takeIf { it.isFile }
+                            ?: resolveImageFile(imagesDir, filename, imageIndex)
+                            ?: continue
+                        val destFile = File(destDir, srcFile.name)
+                        try {
+                            srcFile.copyTo(destFile, overwrite = true)
+                        } catch (e: Exception) {
+                            Log.w("ImportRepository", "Failed to copy image '${srcFile.name}': ${e.message}")
+                        }
+                    }
+                    doneCount++
+                    onProgress("Copying images…", doneCount, poisWithImages.size)
+                }
+            }
+            groupRepository.markImportComplete(groupId, total)
+        }
+
+        if (allRoutes.isNotEmpty()) {
+            onProgress("Writing routes to storage…", 0, allRoutes.size)
+            for ((route, points) in allRoutes) {
+                val routeId = routeRepository.insert(route)
+                if (points.isNotEmpty()) routeRepository.appendPoints(routeId, points)
+                routesCount++
+                onProgress("Writing routes to storage…", routesCount, allRoutes.size)
+            }
+        }
+
+        ImportResult(
+            poisImported = allPois.size,
+            routesImported = routesCount,
+            filesProcessed = if (skipped == 0) 1 else 0,
+            filesSkipped = skipped,
+            errors = errors,
+        )
+    }
+
     // ── GPX parser ────────────────────────────────────────────────────────────
 
     private suspend fun parseGpx(

@@ -22,17 +22,28 @@ class ImportWorker @AssistedInject constructor(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
-        val path = inputData.getString(KEY_FOLDER_PATH) ?: return Result.failure(
-            workDataOf(KEY_ERRORS to arrayOf("No folder path provided"))
+        val folderPath = inputData.getString(KEY_FOLDER_PATH)
+        val filePath = inputData.getString(KEY_FILE_PATH)
+
+        if (folderPath == null && filePath == null) return Result.failure(
+            workDataOf(KEY_ERRORS to arrayOf("No folder or file path provided"))
         )
 
         return try {
             setForeground(buildForegroundInfo("Starting…"))
 
-            val importResult = importRepository.importFolder(path) { phase, done, total ->
-                val text = if (total > 0) "$phase $done / $total" else phase
-                setForeground(buildForegroundInfo(text))
-                setProgress(workDataOf(KEY_PHASE to phase, KEY_DONE to done, KEY_TOTAL to total))
+            val importResult = if (filePath != null) {
+                importRepository.importSingleFile(filePath) { phase, done, total ->
+                    val text = if (total > 0) "$phase $done / $total" else phase
+                    setForeground(buildForegroundInfo(text))
+                    setProgress(workDataOf(KEY_PHASE to phase, KEY_DONE to done, KEY_TOTAL to total))
+                }
+            } else {
+                importRepository.importFolder(folderPath!!) { phase, done, total ->
+                    val text = if (total > 0) "$phase $done / $total" else phase
+                    setForeground(buildForegroundInfo(text))
+                    setProgress(workDataOf(KEY_PHASE to phase, KEY_DONE to done, KEY_TOTAL to total))
+                }
             }
 
             val output = workDataOf(
@@ -76,6 +87,7 @@ class ImportWorker @AssistedInject constructor(
         const val NOTIF_CHANNEL_ID = "import_progress"
 
         const val KEY_FOLDER_PATH = "folder_path"
+        const val KEY_FILE_PATH = "file_path"
         const val KEY_PHASE = "phase"
         const val KEY_DONE = "done"
         const val KEY_TOTAL = "total"

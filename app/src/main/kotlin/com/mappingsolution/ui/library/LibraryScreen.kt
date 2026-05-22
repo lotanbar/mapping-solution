@@ -164,6 +164,8 @@ fun LibraryScreen(
 
     var showAllFilesDialog by remember { mutableStateOf(false) }
     var showFolderPicker by remember { mutableStateOf(false) }
+    var showGpxFilePicker by remember { mutableStateOf(false) }
+    var showImportChoiceDialog by remember { mutableStateOf(false) }
 
     val allFilesSettingsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -218,6 +220,38 @@ fun LibraryScreen(
                 showFolderPicker = false
             },
             onDismiss = { showFolderPicker = false }
+        )
+    }
+
+    if (showGpxFilePicker) {
+        FilePickerDialog(
+            initialPath = "/storage/emulated/0",
+            fileExtension = ".gpx",
+            onFileSelected = { file ->
+                viewModel.importSingleGpxFile(file.absolutePath)
+                showGpxFilePicker = false
+            },
+            onDismiss = { showGpxFilePicker = false },
+        )
+    }
+
+    if (showImportChoiceDialog) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showImportChoiceDialog = false },
+            title = { Text("Import GPX") },
+            text = { Text("Choose how to import your GPX data:") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showImportChoiceDialog = false
+                    showFolderPicker = true
+                }) { Text("Select Folder") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showImportChoiceDialog = false
+                    showGpxFilePicker = true
+                }) { Text("Select Single File") }
+            },
         )
     }
 
@@ -599,7 +633,7 @@ fun LibraryScreen(
                         title = "POIs",
                         isLoading = isImporting,
                         onAction = {
-                            if (hasAllFilesPermission) showFolderPicker = true
+                            if (hasAllFilesPermission) showImportChoiceDialog = true
                             else showAllFilesDialog = true
                         },
                     )

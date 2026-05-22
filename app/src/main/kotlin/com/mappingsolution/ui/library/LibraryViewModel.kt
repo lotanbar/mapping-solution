@@ -569,6 +569,22 @@ class LibraryViewModel @Inject constructor(
         workManager.enqueueUniqueWork(IMPORT_WORK_NAME, ExistingWorkPolicy.REPLACE, request)
     }
 
+    fun importSingleGpxFile(filePath: String) {
+        val fileName = java.io.File(filePath).nameWithoutExtension.takeIf { it.isNotEmpty() } ?: "Import"
+        val request = OneTimeWorkRequestBuilder<ImportWorker>()
+            .setInputData(workDataOf(ImportWorker.KEY_FILE_PATH to filePath))
+            .addTag("$TAG_FOLDER_PREFIX$fileName")
+            .build()
+        currentWorkId = request.id
+        dismissedWorkId = null
+        _importResult.value = null
+        _isBusy.value = true
+        _importingFolderName.value = fileName
+        _importProgressText.value = "Starting…"
+        _importProgressFraction.value = 0f
+        workManager.enqueueUniqueWork(IMPORT_WORK_NAME, ExistingWorkPolicy.REPLACE, request)
+    }
+
     fun dismissImportResult() {
         dismissedWorkId = currentWorkId
         currentWorkId = null

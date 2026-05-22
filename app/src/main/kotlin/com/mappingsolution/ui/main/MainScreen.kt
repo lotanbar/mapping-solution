@@ -53,8 +53,10 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.mappingsolution.BuildConfig
 import com.mappingsolution.data.model.Route
+import com.mappingsolution.data.places.GOOGLE_PLACES_GROUP_ID
 import com.mappingsolution.data.places.GOOGLE_PLACES_MAX_RESULTS
 import com.mappingsolution.data.places.IMPORTED_POI_VIEWPORT_LIMIT
+import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.data.places.OSM_VIEWPORT_LIMIT
 import com.mappingsolution.data.recording.RecordingEvent
 import com.mappingsolution.data.recording.RecordingState
@@ -98,9 +100,12 @@ fun MainScreen(
 
     // Viewport allocation: 20 Google + 20 Overpass/Imported (40 total).
     // Imported claims up to 10 of the 20 Overpass slots; Overpass gets the remainder.
-    val googlePlaces = googlePlacesRaw.take(GOOGLE_PLACES_MAX_RESULTS)
+    // Respect each source's group-level visibility toggle (set from the Library screen).
+    val googleGroupVisible = groups.find { it.id == GOOGLE_PLACES_GROUP_ID }?.isVisible != false
+    val osmGroupVisible = groups.find { it.id == OSM_POI_GROUP_ID }?.isVisible != false
+    val googlePlaces = if (googleGroupVisible) googlePlacesRaw.take(GOOGLE_PLACES_MAX_RESULTS) else emptyList()
     val bulkPois = bulkPoisRaw.take(IMPORTED_POI_VIEWPORT_LIMIT)
-    val osmPois = osmPoisRaw.take(OSM_VIEWPORT_LIMIT - bulkPois.size)
+    val osmPois = if (osmGroupVisible) osmPoisRaw.take(OSM_VIEWPORT_LIMIT - bulkPois.size) else emptyList()
 
     var isFetchingLocation by remember { mutableStateOf(false) }
     var locationError by remember { mutableStateOf<String?>(null) }
