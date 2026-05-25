@@ -65,9 +65,7 @@
         </provider>
     </application>
 
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
-    <!-- Required on Android 13+ for reading image files (incl. AVIF) even alongside MANAGE_EXTERNAL_STORAGE -->
+    <!-- Required on Android 13+ for reading image files (incl. AVIF) -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
 </manifest>

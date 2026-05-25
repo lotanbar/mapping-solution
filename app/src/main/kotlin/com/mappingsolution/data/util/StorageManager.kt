@@ -1,7 +1,6 @@
 package com.mappingsolution.data.util
 
 import android.content.Context
-import android.os.Environment
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
@@ -12,8 +11,8 @@ class StorageManager @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
 
-    /** Public external storage root — for non-image data (JSON, JSONL, recordings, exports). */
-    val rootDir: File = File(Environment.getExternalStorageDirectory(), "mapping-solution-assets")
+    /** App-private external storage root — for non-image data (JSON, JSONL, recordings, exports). */
+    val rootDir: File = File(context.getExternalFilesDir(null) ?: context.filesDir, "mapping-solution-assets")
 
     /**
      * App-private external storage — for image/media files.

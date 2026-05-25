@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Mapping Solution</string>
+    <string name="app_name">mapping-solution</string>
     <string name="personal_pois_group_name">Personal POIs</string>
     <string name="personal_pois_group_description">My personal points of interest</string>
 </resources>

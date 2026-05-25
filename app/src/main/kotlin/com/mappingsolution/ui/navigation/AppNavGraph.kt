@@ -1,7 +1,5 @@
 package com.mappingsolution.ui.navigation
 
-import android.os.Build
-import android.os.Environment
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
@@ -58,7 +56,6 @@ import com.mappingsolution.ui.library.IconPickerScreen
 import com.mappingsolution.ui.library.LibraryScreen
 import com.mappingsolution.ui.main.MainScreen
 import com.mappingsolution.ui.detail.ItemDetailScreen
-import com.mappingsolution.ui.permission.StoragePermissionScreen
 import com.mappingsolution.ui.poi.PoiFormScreen
 import com.mappingsolution.ui.poi.media.MediaPreviewScreen
 import com.mappingsolution.ui.recording.RouteFinalizeScreen
@@ -79,7 +76,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 
 private const val ROUTE_MAIN = "main"
-private const val ROUTE_STORAGE_PERMISSION = "storage_permission"
 private const val ROUTE_LIBRARY = "library"
 private const val ROUTE_GROUP_FORM = "group_form"
 private const val ROUTE_GROUP_FORM_EDIT = "group_form/{groupId}"
@@ -111,21 +107,7 @@ private const val KEY_PLAN_ID = "planId"
 fun AppNavGraph() {
     val navController = rememberNavController()
 
-    val needsPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
-        !Environment.isExternalStorageManager()
-    val startDestination = if (needsPermission) ROUTE_STORAGE_PERMISSION else ROUTE_MAIN
-
-    NavHost(navController = navController, startDestination = startDestination) {
-
-        composable(ROUTE_STORAGE_PERMISSION) {
-            StoragePermissionScreen(
-                onPermissionGranted = {
-                    navController.navigate(ROUTE_MAIN) {
-                        popUpTo(ROUTE_STORAGE_PERMISSION) { inclusive = true }
-                    }
-                }
-            )
-        }
+    NavHost(navController = navController, startDestination = ROUTE_MAIN) {
 
         composable(ROUTE_MAIN) { backStackEntry ->
             val context = LocalContext.current

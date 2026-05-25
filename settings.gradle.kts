@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MappingSolution"
+rootProject.name = "mapping-solution"
 include(":app")
