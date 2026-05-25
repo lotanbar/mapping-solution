@@ -20,6 +20,7 @@ data class GroupFormState(
     val description: String = "",
     val iconKey: String = "place",
     val color: String = "#FF2196F3",
+    val shape: String = "pin",
     val type: GroupType = GroupType.POI,
     val nameError: String? = null,
     val descriptionError: String? = null,
@@ -54,6 +55,7 @@ class GroupFormViewModel @Inject constructor(
                             description = group.description ?: "",
                             iconKey = group.iconKey,
                             color = group.color,
+                            shape = group.shape,
                             type = group.type,
                             isLoading = false,
                         )
@@ -69,6 +71,7 @@ class GroupFormViewModel @Inject constructor(
     fun onDescriptionChange(value: String) = _state.update { it.copy(description = value, descriptionError = null) }
     fun onIconChange(key: String) = _state.update { it.copy(iconKey = key, iconError = null) }
     fun onColorChange(hex: String) = _state.update { it.copy(color = hex, colorError = null) }
+    fun onShapeChange(shape: String) = _state.update { it.copy(shape = shape) }
     fun onTypeChange(type: GroupType) { if (!isEditing) _state.update { it.copy(type = type) } }
 
     fun save(onSuccess: () -> Unit) {
@@ -85,6 +88,7 @@ class GroupFormViewModel @Inject constructor(
                 description = s.description.trim().ifEmpty { null },
                 iconKey = s.iconKey,
                 color = s.color,
+                shape = s.shape,
                 type = s.type,
             )
             val result = if (groupId == null) groupRepository.insert(group)

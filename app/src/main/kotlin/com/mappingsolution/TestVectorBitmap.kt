@@ -63,14 +63,6 @@ fun createPinBitmap(
     return bitmap
 }
 
-/**
- * Source type for circle icon borders.
- * - GOOGLE  → colourful sweep gradient (Google brand colours)
- * - OSM     → solid yellow border
- * - BULK    → solid purple border
- * - USER    → solid border using [borderColorHex]
- */
-enum class PoiSource { GOOGLE, OSM, BULK, USER }
 
 /**
  * Background colours keyed by icon key — same icon key as in IconCatalog.
@@ -210,14 +202,26 @@ private val ICON_BG_COLORS: Map<String, Int> = mapOf(
 
 private val DEFAULT_BG = 0xFF3949AB.toInt()
 
-// Google brand sweep gradient colours — kept for potential future use
-private val GOOGLE_GRADIENT_COLORS = intArrayOf(
-    0xFF4285F4.toInt(),
-    0xFF34A853.toInt(),
-    0xFFFBBC05.toInt(),
-    0xFFEA4335.toInt(),
-    0xFF4285F4.toInt(),
-)
+/**
+ * Creates a square bitmap of [size]×[size] with a rounded-rect background coloured from
+ * [ICON_BG_COLORS], matching the style of [createCircleIcon] but square.
+ * Corner radius is ~20% of size for a "squircle" look.
+ */
+fun createSquareIcon(
+    iconKey: String,
+    size: Int = 80,
+): Bitmap {
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val cornerRadius = size * 0.20f
+    val bgColor = ICON_BG_COLORS[iconKey] ?: DEFAULT_BG
+    val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = bgColor
+        style = Paint.Style.FILL
+    }
+    canvas.drawRoundRect(RectF(0f, 0f, size.toFloat(), size.toFloat()), cornerRadius, cornerRadius, bgPaint)
+    return bitmap
+}
 
 /**
  * Creates a square bitmap of [size]×[size] showing a filled circle with
@@ -226,25 +230,17 @@ private val GOOGLE_GRADIENT_COLORS = intArrayOf(
  */
 fun createCircleIcon(
     iconKey: String,
-    source: PoiSource,
-    borderColorHex: String = "#FFFFFF",
     size: Int = 80,
 ): Bitmap {
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     val cx = size / 2f
-    val cy = size / 2f
-    val borderWidth = size * 0.08f
-    val outerR = size / 2f - 1f
-    val innerR = outerR - borderWidth
-
     val bgColor = ICON_BG_COLORS[iconKey] ?: DEFAULT_BG
     val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = bgColor
         style = Paint.Style.FILL
     }
-    canvas.drawCircle(cx, cy, outerR, bgPaint)
-
+    canvas.drawCircle(cx, cx, cx - 1f, bgPaint)
     return bitmap
 }
 

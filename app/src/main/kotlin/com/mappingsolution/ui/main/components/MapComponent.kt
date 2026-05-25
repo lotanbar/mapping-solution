@@ -27,9 +27,9 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.gson.JsonObject
 import com.mappingsolution.BuildConfig
-import com.mappingsolution.PoiSource
 import com.mappingsolution.createCircleIcon
 import com.mappingsolution.createPinBitmap
+import com.mappingsolution.createSquareIcon
 import com.mappingsolution.data.map.MapStyle
 import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.Poi
@@ -107,16 +107,53 @@ private fun createPoiPin(
 
 private fun createPoiCircle(
     iconKey: String,
-    source: PoiSource,
     painter: Painter,
     density: Density,
     layoutDirection: LayoutDirection,
     size: Int = 80,
 ): Bitmap {
-    val bitmap = createCircleIcon(iconKey, source, size = size)
+    val bitmap = createCircleIcon(iconKey, size = size)
     val androidCanvas = android.graphics.Canvas(bitmap)
 
     // "place" is a teardrop pin shape — draw a white dot instead for a clean look
+    if (iconKey == "place") {
+        val dotPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            style = android.graphics.Paint.Style.FILL
+        }
+        val cx = size / 2f
+        androidCanvas.drawCircle(cx, cx, size * 0.20f, dotPaint)
+        return bitmap
+    }
+
+    val composeCanvas = androidx.compose.ui.graphics.Canvas(androidCanvas)
+    val drawScope = CanvasDrawScope()
+    val iconSize = size * 0.55f
+    val offset = (size - iconSize) / 2f
+
+    drawScope.draw(density, layoutDirection, composeCanvas, Size(size.toFloat(), size.toFloat())) {
+        withTransform({ translate(offset, offset) }) {
+            with(painter) {
+                draw(
+                    size = Size(iconSize, iconSize),
+                    colorFilter = ColorFilter.tint(Color.White),
+                )
+            }
+        }
+    }
+    return bitmap
+}
+
+private fun createPoiSquare(
+    iconKey: String,
+    painter: Painter,
+    density: Density,
+    layoutDirection: LayoutDirection,
+    size: Int = 80,
+): Bitmap {
+    val bitmap = createSquareIcon(iconKey, size = size)
+    val androidCanvas = android.graphics.Canvas(bitmap)
+
     if (iconKey == "place") {
         val dotPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.WHITE
@@ -162,6 +199,7 @@ fun MapComponent(
     mapStyle: MapStyle = MapStyle.SATELLITE,
     hillshadeVisible: Boolean = true,
     rasterLayers: List<RasterLayer> = emptyList(),
+    baseMapVisible: Boolean = true,
     onCameraIdle: (lat: Double, lng: Double, zoom: Double, bearing: Double, tilt: Double) -> Unit = { _, _, _, _, _ -> },
     onBoundsChanged: (north: Double, south: Double, east: Double, west: Double, lat: Double, lng: Double, zoom: Double, bearing: Double, tilt: Double) -> Unit = { _, _, _, _, _, _, _, _, _ -> },
     onPoiTapped: (String) -> Unit = {},
@@ -203,12 +241,16 @@ fun MapComponent(
     // Painters for group icons (subset of allPainters, kept for groupBitmaps)
     val painters = allPainters
 
-    // Generate bitmaps for each group + default
+    // Generate bitmaps for each group + default, respecting the group's chosen shape
     val groupBitmaps = remember(groups, painters) {
         val bitmaps = mutableMapOf<String, Bitmap>()
         groups.forEach { group ->
             val painter = painters[group.iconKey] ?: placePainterFallback
-            bitmaps[group.id] = createPoiPin(group.color, painter, density, layoutDirection)
+            bitmaps[group.id] = when (group.shape) {
+                "circle" -> createPoiCircle(group.iconKey, painter, density, layoutDirection)
+                "square" -> createPoiSquare(group.iconKey, painter, density, layoutDirection)
+                else     -> createPoiPin(group.color, painter, density, layoutDirection) // "pin" default
+            }
         }
         bitmaps["default"] = createPoiPin("#2196F3", placePainterFallback, density, layoutDirection)
         bitmaps
@@ -220,10 +262,23 @@ fun MapComponent(
                 Lifecycle.Event.ON_START   -> mapView.onStart()
                 Lifecycle.Event.ON_RESUME  -> {
                     mapView.onResume()
-                    // Re-enable LocationComponent sensors on every resume (handles both the
-                    // initial case where activation happens after onResume, and future app resumes)
-                    mapState.value?.locationComponent?.takeIf { it.isLocationComponentActivated }
-                        ?.let { it.isLocationComponentEnabled = true }
+                    val locationComponent = mapState.value?.locationComponent
+                    if (locationComponent != null) {
+                        if (locationComponent.isLocationComponentActivated) {
+                            // Re-enable sensors on every resume
+                            locationComponent.isLocationComponentEnabled = true
+                        } else {
+                            // Permission may have been granted since the style loaded; activate now
+                            val hasPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+                                context, android.Manifest.permission.ACCESS_FINE_LOCATION
+                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                            val map = mapState.value
+                            val style = map?.style
+                            if (hasPermission && map != null && style != null && style.isFullyLoaded) {
+                                activateLocationComponent(map, style, context, mapView, lifecycleOwner)
+                            }
+                        }
+                    }
                 }
                 Lifecycle.Event.ON_PAUSE   -> mapView.onPause()
                 Lifecycle.Event.ON_STOP    -> mapView.onStop()
@@ -287,15 +342,15 @@ fun MapComponent(
         }
     }
 
-    // Register all catalog icon bitmaps for Google (gradient border) and OSM (yellow border) on style ready
+    // Register all catalog icon bitmaps for Google and OSM on style ready
     LaunchedEffect(styleReady.value) {
         val map = mapState.value ?: return@LaunchedEffect
         if (!styleReady.value) return@LaunchedEffect
         val style = map.style ?: return@LaunchedEffect
         allIconKeys.forEach { key ->
             val painter = allPainters[key] ?: placePainterFallback
-            style.addImage("pin-google-$key", createPoiCircle(key, PoiSource.GOOGLE, painter, density, layoutDirection))
-            style.addImage("pin-osm-$key", createPoiCircle(key, PoiSource.OSM, painter, density, layoutDirection))
+            style.addImage("pin-google-$key", createPoiCircle(key, painter, density, layoutDirection))
+            style.addImage("pin-osm-$key", createPoiCircle(key, painter, density, layoutDirection))
         }
     }
 
@@ -406,6 +461,20 @@ fun MapComponent(
             )
     }
 
+    // Hide all base-map style layers when an imported raster layer is active
+    LaunchedEffect(baseMapVisible, styleReady.value) {
+        val map = mapState.value ?: return@LaunchedEffect
+        if (!styleReady.value) return@LaunchedEffect
+        val style = map.style ?: return@LaunchedEffect
+        style.layers.forEach { layer ->
+            if (layer.id !in BASE_MAP_EXCLUDED_LAYER_IDS && !layer.id.startsWith(RASTER_LAYER_PREFIX)) {
+                layer.setProperties(
+                    PropertyFactory.visibility(if (baseMapVisible) Property.VISIBLE else Property.NONE)
+                )
+            }
+        }
+    }
+
     // Sync raster (MBTiles) layers: add new sources/layers, remove deleted ones, update visibility
     LaunchedEffect(rasterLayers, styleReady.value) {
         val map = mapState.value ?: return@LaunchedEffect
@@ -514,40 +583,57 @@ fun MapComponent(
     }
 
     LaunchedEffect(bulkPois, groups, styleReady.value) {
-        val map = mapState.value ?: return@LaunchedEffect
-        if (!styleReady.value) return@LaunchedEffect
-        val style = map.style ?: return@LaunchedEffect
-        val source = style.getSource("bulk-poi-source") as? GeoJsonSource ?: return@LaunchedEffect
-
-        // Build a colour lookup for each group
-        val groupColorMap = groups.associate { it.id to it.color }
-
-        // Register a bitmap for each unique (iconKey, groupColor) combo not already registered
-        val registered = mutableSetOf<String>()
-        bulkPois.forEach { poi ->
-            val resolvedIcon = poi.iconKey ?: "place"  // always use circle, never teardrop pin
-            val groupColor = groupColorMap[poi.groupId] ?: "#2196F3"
-            val bitmapKey = "pin-bulk-$resolvedIcon-$groupColor"
-            if (registered.add(bitmapKey)) {
-                val painter = allPainters[resolvedIcon] ?: placePainterFallback
-                style.addImage(bitmapKey, createPoiCircle(resolvedIcon, PoiSource.BULK, painter, density, layoutDirection))
-            }
+        android.util.Log.d("MapComponent", "bulkPois LaunchedEffect fired: ${bulkPois.size} pois, styleReady=${styleReady.value}")
+        val map = mapState.value
+        if (map == null) {
+            android.util.Log.w("MapComponent", "bulkPois: mapState is null, skipping")
+            return@LaunchedEffect
         }
-
-        val features = bulkPois.map { poi ->
-            val resolvedIcon = poi.iconKey ?: "place"
-            val groupColor = groupColorMap[poi.groupId] ?: "#2196F3"
-            val iconId = "pin-bulk-$resolvedIcon-$groupColor"
-            Feature.fromGeometry(
-                Point.fromLngLat(poi.lng, poi.lat),
-                null,
-                poi.id,
-            ).apply {
-                addStringProperty("poiId", poi.id)
-                addStringProperty("icon-id", iconId)
-            }
+        if (!styleReady.value) {
+            android.util.Log.w("MapComponent", "bulkPois: style not ready, skipping")
+            return@LaunchedEffect
         }
-        source.setGeoJson(FeatureCollection.fromFeatures(features))
+        val style = map.style
+        if (style == null) {
+            android.util.Log.w("MapComponent", "bulkPois: map.style is null, skipping")
+            return@LaunchedEffect
+        }
+        val source = style.getSource("bulk-poi-source") as? GeoJsonSource
+        if (source == null) {
+            android.util.Log.w("MapComponent", "bulkPois: bulk-poi-source not found in style, skipping")
+            return@LaunchedEffect
+        }
+        android.util.Log.d("MapComponent", "bulkPois: source found, building features")
+
+        try {
+            // Register one square bitmap per unique icon key (keyed by individual POI icon)
+            val registered = mutableSetOf<String>()
+            bulkPois.forEach { poi ->
+                val resolvedIcon = poi.iconKey?.takeIf { it.isNotBlank() } ?: "place"
+                val bitmapKey = "pin-bulk-$resolvedIcon"
+                if (registered.add(bitmapKey)) {
+                    val painter = allPainters[resolvedIcon] ?: placePainterFallback
+                    style.addImage(bitmapKey, createPoiSquare(resolvedIcon, painter, density, layoutDirection))
+                }
+            }
+
+            val features = bulkPois.map { poi ->
+                val resolvedIcon = poi.iconKey?.takeIf { it.isNotBlank() } ?: "place"
+                val iconId = "pin-bulk-$resolvedIcon"
+                Feature.fromGeometry(
+                    Point.fromLngLat(poi.lng, poi.lat),
+                    null,
+                    poi.id,
+                ).apply {
+                    addStringProperty("poiId", poi.id)
+                    addStringProperty("icon-id", iconId)
+                }
+            }
+            source.setGeoJson(FeatureCollection.fromFeatures(features))
+            android.util.Log.d("MapComponent", "bulkPois: setGeoJson done with ${features.size} features")
+        } catch (e: Exception) {
+            android.util.Log.e("MapComponent", "bulkPois: exception in LaunchedEffect", e)
+        }
     }
 
     AndroidView(
@@ -678,6 +764,18 @@ fun MapComponent(
 private const val RASTER_SOURCE_PREFIX = "mbtiles-source-"
 private const val RASTER_LAYER_PREFIX = "mbtiles-layer-"
 
+/** Custom layers we add on top of the base map style — never hidden by the base-map toggle. */
+private val BASE_MAP_EXCLUDED_LAYER_IDS = setOf(
+    "terrain-hillshade",
+    "saved-routes-lines",
+    "live-route-line",
+    "osm-poi-symbols",
+    "bulk-poi-symbols",
+    "google-places-symbols",
+    "poi-symbols",
+    "search-preview-symbol",
+)
+
 /**
  * Adds all custom sources, layers, images and activates the location component for a newly
  * loaded (or switched) MapLibre style. Safe to call on both first load and style switches.
@@ -764,16 +862,17 @@ private fun setupMapStyle(
         )
     )
     style.addLayer(
-        SymbolLayer("osm-poi-symbols", "osm-poi-source").withProperties(
+        SymbolLayer("bulk-poi-symbols", "bulk-poi-source").withProperties(
             PropertyFactory.iconImage(Expression.get("icon-id")),
             PropertyFactory.iconAllowOverlap(true),
             PropertyFactory.iconIgnorePlacement(true),
             PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
             PropertyFactory.iconOpacity(0.9f),
+            PropertyFactory.iconSize(0.8f),
         )
     )
     style.addLayer(
-        SymbolLayer("bulk-poi-symbols", "bulk-poi-source").withProperties(
+        SymbolLayer("osm-poi-symbols", "osm-poi-source").withProperties(
             PropertyFactory.iconImage(Expression.get("icon-id")),
             PropertyFactory.iconAllowOverlap(true),
             PropertyFactory.iconIgnorePlacement(true),
@@ -813,8 +912,8 @@ private fun setupMapStyle(
     groupBitmaps.forEach { (id, bitmap) -> style.addImage("pin-$id", bitmap) }
     allIconKeys.forEach { key ->
         val painter = allPainters[key] ?: placePainterFallback
-        style.addImage("pin-google-$key", createPoiCircle(key, PoiSource.GOOGLE, painter, density, layoutDirection))
-        style.addImage("pin-osm-$key", createPoiCircle(key, PoiSource.OSM, painter, density, layoutDirection))
+        style.addImage("pin-google-$key", createPoiCircle(key, painter, density, layoutDirection))
+        style.addImage("pin-osm-$key", createPoiCircle(key, painter, density, layoutDirection))
     }
     // Distinct red pin used for the search preview marker
     style.addImage("pin-search-preview", createPoiPin("#F44336", placePainterFallback, density, layoutDirection))
@@ -833,11 +932,29 @@ private fun setupMapStyle(
         )
     }
 
-    // --- User location dot / cone / glow bitmaps ---
+    // --- Location component ---
+    val locationPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+        context, android.Manifest.permission.ACCESS_FINE_LOCATION
+    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    if (locationPermission) {
+        activateLocationComponent(map, style, context, mapView, lifecycleOwner)
+    }
+
+    styleReady.value = true
+    onMapReady(map)
+}
+
+private fun activateLocationComponent(
+    map: org.maplibre.android.maps.MapLibreMap,
+    style: org.maplibre.android.maps.Style,
+    context: android.content.Context,
+    mapView: org.maplibre.android.maps.MapView,
+    lifecycleOwner: androidx.lifecycle.LifecycleOwner,
+) {
     val dp = context.resources.displayMetrics.density
 
     val glowPx = (80 * dp).toInt()
-    val glowBmp = Bitmap.createBitmap(glowPx, glowPx, Bitmap.Config.ARGB_8888)
+    val glowBmp = android.graphics.Bitmap.createBitmap(glowPx, glowPx, android.graphics.Bitmap.Config.ARGB_8888)
     android.graphics.Canvas(glowBmp).drawCircle(
         glowPx / 2f, glowPx / 2f, glowPx / 2f,
         android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
@@ -851,7 +968,7 @@ private fun setupMapStyle(
     )
 
     val conePx = (156 * dp).toInt()
-    val coneBmp = Bitmap.createBitmap(conePx, conePx, Bitmap.Config.ARGB_8888)
+    val coneBmp = android.graphics.Bitmap.createBitmap(conePx, conePx, android.graphics.Bitmap.Config.ARGB_8888)
     android.graphics.Canvas(coneBmp).apply {
         val cx = conePx / 2f
         val coneAngle = 72f
@@ -893,7 +1010,7 @@ private fun setupMapStyle(
     }
 
     val dotPx = (24 * dp).toInt()
-    val dotBmp = Bitmap.createBitmap(dotPx, dotPx, Bitmap.Config.ARGB_8888)
+    val dotBmp = android.graphics.Bitmap.createBitmap(dotPx, dotPx, android.graphics.Bitmap.Config.ARGB_8888)
     android.graphics.Canvas(dotBmp).apply {
         val cx = dotPx / 2f
         drawCircle(cx, cx, cx, android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.WHITE })
@@ -904,37 +1021,28 @@ private fun setupMapStyle(
     style.addImage("user-loc-cone", coneBmp)
     style.addImage("user-loc-dot", dotBmp)
 
-    // --- Location component ---
-    val locationPermission = androidx.core.content.ContextCompat.checkSelfPermission(
-        context, android.Manifest.permission.ACCESS_FINE_LOCATION
-    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-    if (locationPermission) {
-        val locationOptions = org.maplibre.android.location.LocationComponentOptions.builder(context)
-            .backgroundName("user-loc-glow")
-            .bearingName("user-loc-cone")
-            .foregroundName("user-loc-dot")
-            .backgroundTintColor(null as Int?)
-            .bearingTintColor(null as Int?)
-            .foregroundTintColor(null as Int?)
-            .backgroundStaleName("user-loc-glow")
-            .foregroundStaleName("user-loc-dot")
-            .accuracyAlpha(0f)
-            .pulseEnabled(false)
-            .build()
-        val activationOptions = org.maplibre.android.location.LocationComponentActivationOptions
-            .builder(context, style)
-            .locationComponentOptions(locationOptions)
-            .useDefaultLocationEngine(true)
-            .build()
-        map.locationComponent.activateLocationComponent(activationOptions)
-        map.locationComponent.isLocationComponentEnabled = true
-        map.locationComponent.cameraMode = org.maplibre.android.location.modes.CameraMode.NONE
-        map.locationComponent.renderMode = org.maplibre.android.location.modes.RenderMode.COMPASS
-        if (lifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
-            mapView.onResume()
-        }
+    val locationOptions = org.maplibre.android.location.LocationComponentOptions.builder(context)
+        .backgroundName("user-loc-glow")
+        .bearingName("user-loc-cone")
+        .foregroundName("user-loc-dot")
+        .backgroundTintColor(null as Int?)
+        .bearingTintColor(null as Int?)
+        .foregroundTintColor(null as Int?)
+        .backgroundStaleName("user-loc-glow")
+        .foregroundStaleName("user-loc-dot")
+        .accuracyAlpha(0f)
+        .pulseEnabled(false)
+        .build()
+    val activationOptions = org.maplibre.android.location.LocationComponentActivationOptions
+        .builder(context, style)
+        .locationComponentOptions(locationOptions)
+        .useDefaultLocationEngine(true)
+        .build()
+    map.locationComponent.activateLocationComponent(activationOptions)
+    map.locationComponent.isLocationComponentEnabled = true
+    map.locationComponent.cameraMode = org.maplibre.android.location.modes.CameraMode.NONE
+    map.locationComponent.renderMode = org.maplibre.android.location.modes.RenderMode.COMPASS
+    if (lifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+        mapView.onResume()
     }
-
-    styleReady.value = true
-    onMapReady(map)
 }

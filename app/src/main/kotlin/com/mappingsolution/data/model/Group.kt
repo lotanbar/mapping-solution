@@ -10,6 +10,8 @@ data class Group(
     val description: String? = null,
     val iconKey: String,
     val color: String,
+    /** Shape used to render this group's POIs on the map: "pin", "circle", or "square". */
+    val shape: String = "pin",
     val isVisible: Boolean = true,
     val isImported: Boolean = false,
     val importComplete: Boolean = true,

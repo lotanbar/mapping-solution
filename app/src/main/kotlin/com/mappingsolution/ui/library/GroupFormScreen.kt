@@ -148,6 +148,27 @@ fun GroupFormScreen(
                     }
                 }
 
+                // Shape selector
+                Column {
+                    Text(
+                        text = "Shape",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(bottom = 6.dp),
+                    )
+                    val shapes = listOf("pin" to "Pin", "circle" to "Circle", "square" to "Square")
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        shapes.forEachIndexed { index, (key, label) ->
+                            SegmentedButton(
+                                selected = state.shape == key,
+                                onClick = { viewModel.onShapeChange(key) },
+                                shape = SegmentedButtonDefaults.itemShape(index = index, count = shapes.size),
+                                label = { Text(label) },
+                            )
+                        }
+                    }
+                }
+
                 // Color selector
                 Column {
                     Text(
