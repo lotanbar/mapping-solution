@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -41,9 +42,26 @@ class MapLayersState @Inject constructor(
             state.asStateFlow()
         }
 
+    /** True when no imported raster layer is visible — base map should be shown. */
+    val baseMapVisible: StateFlow<Boolean> = rasterLayerRepository.observeAll()
+        .map { layers -> layers.none { it.isVisible } }
+        .let { flow ->
+            val state = MutableStateFlow(true)
+            CoroutineScope(Dispatchers.Default).launch {
+                flow.collect { state.value = it }
+            }
+            state.asStateFlow()
+        }
+
     fun setMapStyle(style: MapStyle) {
         mapStyle.value = style
         mapStylePreference.save(style)
+        // Deactivate all imported raster layers — only one map layer active at a time
+        CoroutineScope(Dispatchers.IO).launch {
+            rasterLayers.value.filter { it.isVisible }.forEach { l ->
+                rasterLayerRepository.update(l.copy(isVisible = false))
+            }
+        }
     }
 
     fun setHillshadeVisible(visible: Boolean) {
@@ -53,8 +71,16 @@ class MapLayersState @Inject constructor(
 
     fun toggleRasterLayerVisibility(id: String) {
         val layer = rasterLayerRepository.findById(id) ?: return
+        // Radio-button: tapping an already-visible layer does nothing.
+        if (layer.isVisible) return
         CoroutineScope(Dispatchers.IO).launch {
-            rasterLayerRepository.update(layer.copy(isVisible = !layer.isVisible))
+            // Turn on the tapped layer, turn all others off.
+            rasterLayers.value.forEach { l ->
+                val targetVisible = l.id == id
+                if (l.isVisible != targetVisible) {
+                    rasterLayerRepository.update(l.copy(isVisible = targetVisible))
+                }
+            }
         }
     }
 }
