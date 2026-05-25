@@ -13,7 +13,11 @@ import javax.inject.Singleton
 @Singleton
 class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
 
-    private val overpassUrl = "https://overpass-api.de/api/interpreter"
+    private val overpassEndpoints = listOf(
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.openstreetmap.fr/api/interpreter",
+    )
     private val formMediaType = "application/x-www-form-urlencoded".toMediaType()
 
     /**
@@ -36,7 +40,7 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
 
         val request = Request.Builder()
             .url(url)
-            .addHeader("User-Agent", "MappingSolution/1.0")
+            .addHeader("User-Agent", "mapping-solution/1.0")
             .get()
             .build()
 
@@ -103,47 +107,60 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
         """.trimIndent()
 
         val body = "data=${java.net.URLEncoder.encode(query, "UTF-8")}".toRequestBody(formMediaType)
-        val request = Request.Builder()
-            .url(overpassUrl)
-            .addHeader("Accept", "*/*")
-            .addHeader("User-Agent", "MappingSolution/1.0")
-            .post(body)
-            .build()
 
-        return runCatching {
-            httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.e("OsmApiService", "HTTP ${response.code}: ${response.body?.string()}")
-                    return@runCatching emptyList()
-                }
-                val json = JSONObject(response.body!!.string())
-                val elements = json.optJSONArray("elements") ?: return@runCatching emptyList()
-                val now = System.currentTimeMillis()
-                (0 until elements.length()).mapNotNull { i ->
-                    runCatching {
-                        val el = elements.getJSONObject(i)
-                        val tags = el.optJSONObject("tags") ?: return@runCatching null
-                        val name = tags.optString("name").takeIf { it.isNotBlank() }
-                            ?: tags.optString("name:en").takeIf { it.isNotBlank() }
-                            ?: return@runCatching null
-                        val tagsMap = tags.keys().asSequence().associateWith { tags.getString(it) }
-                        val resolvedIconKey = PoiIconResolver.resolveForOsmTags(tagsMap)
-                        Poi(
-                            id = "osm_${el.getLong("id")}",
-                            groupId = OSM_POI_GROUP_ID,
-                            name = name,
-                            lat = el.getDouble("lat"),
-                            lng = el.getDouble("lon"),
-                            iconKey = resolvedIconKey,
-                            createdAt = now,
-                            updatedAt = now,
-                        )
-                    }.getOrNull()
+        for (endpoint in overpassEndpoints) {
+            val request = Request.Builder()
+                .url(endpoint)
+                .addHeader("Accept", "*/*")
+                .addHeader("User-Agent", "mapping-solution/1.0")
+                .post(body)
+                .build()
+
+            val result = runCatching {
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        Log.e("OsmApiService", "HTTP ${response.code} from $endpoint: ${response.body?.string()}")
+                        return@runCatching null
+                    }
+                    val json = JSONObject(response.body!!.string())
+                    val elements = json.optJSONArray("elements") ?: return@runCatching emptyList()
+                    val now = System.currentTimeMillis()
+                    (0 until elements.length()).mapNotNull { i ->
+                        runCatching {
+                            val el = elements.getJSONObject(i)
+                            val tags = el.optJSONObject("tags") ?: return@runCatching null
+                            val name = tags.optString("name").takeIf { it.isNotBlank() }
+                                ?: tags.optString("name:en").takeIf { it.isNotBlank() }
+                                ?: return@runCatching null
+                            val tagsMap = tags.keys().asSequence().associateWith { tags.getString(it) }
+                            val resolvedIconKey = PoiIconResolver.resolveForOsmTags(tagsMap)
+                            Poi(
+                                id = "osm_${el.getLong("id")}",
+                                groupId = OSM_POI_GROUP_ID,
+                                name = name,
+                                lat = el.getDouble("lat"),
+                                lng = el.getDouble("lon"),
+                                iconKey = resolvedIconKey,
+                                createdAt = now,
+                                updatedAt = now,
+                            )
+                        }.getOrNull()
+                    }
                 }
             }
-        }.getOrElse { e ->
-            Log.e("OsmApiService", "fetchPois failed", e)
-            emptyList()
+
+            val pois = result.getOrElse { e ->
+                Log.w("OsmApiService", "fetchPois failed for $endpoint: ${e.message}")
+                null
+            }
+            if (pois != null) {
+                if (endpoint != overpassEndpoints.first()) {
+                    Log.i("OsmApiService", "fetchPois succeeded via fallback: $endpoint")
+                }
+                return pois
+            }
         }
+        Log.e("OsmApiService", "fetchPois: all Overpass endpoints failed")
+        return emptyList()
     }
 }

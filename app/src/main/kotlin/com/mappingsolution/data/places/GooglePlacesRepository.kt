@@ -90,9 +90,10 @@ class GooglePlacesRepository @Inject constructor(
         try {
             _isLoading.value = true
 
-            // Zoom-out: discard high-zoom POIs so the user sees a clean low-zoom fetch.
+            // Zoom-out by more than 1 level: discard high-zoom POIs so the user sees a clean low-zoom fetch.
             val prevZoom = lastFetchedZoom
-            if (prevZoom != null && zoom < prevZoom) {
+            if (prevZoom != null && zoom < prevZoom - 1.0) {
+                android.util.Log.d("GooglePlacesRepo", "refreshForViewport: zoom decreased from $prevZoom → $zoom, clearing POIs")
                 _pois.value = emptyList()
                 lastFetchedBounds = null
             }
