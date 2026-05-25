@@ -9,6 +9,8 @@ import com.mappingsolution.data.fs.GroupFileRepository
 import com.mappingsolution.data.fs.PoiFileRepository
 import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.GroupType
+import com.mappingsolution.data.places.GOOGLE_PLACES_GROUP_ID
+import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.util.AppFileLogger
 import com.mappingsolution.data.util.StorageManager
@@ -55,7 +57,14 @@ class PoiFormViewModel @Inject constructor(
     val isEditing: Boolean get() = _poiId != null
 
     val groups: StateFlow<List<Group>> = groupRepository.observeAll()
-        .map { groups -> groups.filter { it.type == GroupType.POI } }
+        .map { groups ->
+            groups.filter {
+                it.type == GroupType.POI &&
+                !it.isBulk &&
+                it.id != GOOGLE_PLACES_GROUP_ID &&
+                it.id != OSM_POI_GROUP_ID
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _state = MutableStateFlow(

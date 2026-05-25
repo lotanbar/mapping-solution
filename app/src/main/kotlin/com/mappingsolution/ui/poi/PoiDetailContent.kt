@@ -15,7 +15,12 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.ImageNotSupported
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -28,6 +33,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
+import com.mappingsolution.ui.common.resolvedTextAlign
+import com.mappingsolution.ui.common.resolvedTextDirection
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.decode.VideoFrameDecoder
@@ -36,9 +46,42 @@ import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.MediaItem
 import com.mappingsolution.data.model.MediaType
 import com.mappingsolution.data.model.Poi
+import com.mappingsolution.data.places.GOOGLE_PLACES_GROUP_ID
+import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.ui.common.IconCatalog
 import java.io.File
 import kotlin.random.Random
+
+/**
+ * Shown in place of the media pager when there are no media items.
+ * The caller passes the same height/weight modifier used for [PoiMediaPager].
+ */
+@Composable
+fun NoMediaPlaceholder(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Default.ImageNotSupported,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                modifier = Modifier.size(52.dp),
+            )
+            Text(
+                text = "No Images",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+            )
+        }
+    }
+}
 
 /**
  * Full-width swipeable image/media pager. The caller controls the height via [modifier]
@@ -141,7 +184,55 @@ fun PoiMediaPager(
 }
 
 /**
+ * Shows the appropriate source icon for a POI group:
+ * Google Places → location pin, OSM → globe, imported → layers icon, user groups → their IconCatalog icon.
+ */
+@Composable
+fun PoiGroupSourceIcon(
+    group: Group,
+    size: Dp,
+    tint: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
+) {
+    when {
+        group.id == GOOGLE_PLACES_GROUP_ID -> {
+            Icon(
+                imageVector = Icons.Default.LocationOn,
+                contentDescription = null,
+                modifier = modifier.size(size),
+                tint = tint,
+            )
+        }
+        group.id == OSM_POI_GROUP_ID -> {
+            Icon(
+                imageVector = Icons.Default.Public,
+                contentDescription = null,
+                modifier = modifier.size(size),
+                tint = tint,
+            )
+        }
+        group.isImported -> {
+            Icon(
+                imageVector = Icons.Default.Layers,
+                contentDescription = null,
+                modifier = modifier.size(size),
+                tint = tint,
+            )
+        }
+        else -> {
+            Icon(
+                imageVector = IconCatalog.iconVector(group.iconKey),
+                contentDescription = null,
+                modifier = modifier.size(size),
+                tint = tint,
+            )
+        }
+    }
+}
+
+/**
  * Name / group / description info block shared across POI detail screens.
+ * Order: title → description → source. Text direction auto-detects Hebrew vs English.
  */
 @Composable
 fun PoiInfoBlock(
@@ -151,44 +242,46 @@ fun PoiInfoBlock(
 ) {
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(
-                text = poi.name,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f),
-            )
-
-            group?.let {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Icon(
-                        imageVector = IconCatalog.iconVector(it.iconKey),
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                    Text(
-                        text = it.name,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
+        Text(
+            text = poi.name,
+            style = MaterialTheme.typography.headlineSmall.copy(
+                textDirection = poi.name.resolvedTextDirection(),
+                textAlign = poi.name.resolvedTextAlign(),
+            ),
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.fillMaxWidth(),
+        )
 
         if (!poi.description.isNullOrBlank()) {
             Text(
                 text = poi.description,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    textDirection = poi.description.resolvedTextDirection(),
+                    textAlign = poi.description.resolvedTextAlign(),
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth(),
             )
+        }
+
+        group?.let {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                PoiGroupSourceIcon(
+                    group = it,
+                    size = 16.dp,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = if (it.id == OSM_POI_GROUP_ID) "Open Street Map" else it.name,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

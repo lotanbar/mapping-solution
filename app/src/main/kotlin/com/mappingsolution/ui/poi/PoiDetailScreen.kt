@@ -23,10 +23,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import com.mappingsolution.ui.common.TopToast
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.mappingsolution.data.model.MediaUtils
@@ -39,7 +42,9 @@ fun PoiDetailScreen(
     viewModel: PoiDetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    var topToastMessage by remember { mutableStateOf<String?>(null) }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold { padding ->
         if (state.isLoading) {
             Box(
@@ -64,6 +69,7 @@ fun PoiDetailScreen(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState()),
             ) {
+                val galleryHeight = LocalConfiguration.current.screenHeightDp.dp * 0.45f
                 if (state.mediaPaths.isNotEmpty()) {
                     val mediaItems = state.mediaPaths.mapIndexed { index, path ->
                         MediaUtils.createMediaItem(path, index)
@@ -71,7 +77,10 @@ fun PoiDetailScreen(
                     PoiMediaPager(
                         mediaItems = mediaItems,
                         onItemClick = { index -> onOpenMediaPreview(poi.id, index, state.mediaPaths) },
+                        modifier = Modifier.height(galleryHeight),
                     )
+                } else {
+                    NoMediaPlaceholder(modifier = Modifier.height(galleryHeight))
                 }
 
                 PoiInfoBlock(
@@ -90,8 +99,7 @@ fun PoiDetailScreen(
                 shadowElevation = 8.dp,
             ) {
                 Column {
-                    val context = LocalContext.current
-                    var lastDeleteClickTime by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0L) }
+                    var lastDeleteClickTime by remember { mutableStateOf(0L) }
                     Button(
                         onClick = { onNavigateToEdit(poi.id) },
                         modifier = Modifier
@@ -115,7 +123,7 @@ fun PoiDetailScreen(
                                 }
                             } else {
                                 lastDeleteClickTime = currentTime
-                                android.widget.Toast.makeText(context, "Tap again quickly to remove POI", android.widget.Toast.LENGTH_SHORT).show()
+                                topToastMessage = "Tap again quickly to remove POI"
                             }
                         },
                         modifier = Modifier
@@ -132,5 +140,7 @@ fun PoiDetailScreen(
                 }
             }
         }
+    }
+        TopToast(message = topToastMessage, onDismiss = { topToastMessage = null })
     }
 }

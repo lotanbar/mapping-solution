@@ -48,12 +48,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
+import com.mappingsolution.ui.common.resolvedTextAlign
+import com.mappingsolution.ui.common.resolvedTextDirection
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.mappingsolution.data.model.DestinationSource
 import com.mappingsolution.data.model.MediaUtils
 import com.mappingsolution.data.model.PlanDestination
-import com.mappingsolution.ui.common.IconCatalog
+import com.mappingsolution.data.places.OSM_POI_GROUP_ID
+import com.mappingsolution.ui.common.TopToast
+import com.mappingsolution.ui.poi.NoMediaPlaceholder
+import com.mappingsolution.ui.poi.PoiGroupSourceIcon
 import com.mappingsolution.ui.poi.PoiInfoBlock
 import com.mappingsolution.ui.poi.PoiMediaPager
 import com.mappingsolution.ui.searchnplan.NavigationIntentHelper
@@ -76,9 +83,11 @@ fun ItemDetailScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    var topToastMessage by remember { mutableStateOf<String?>(null) }
 
     val isRoute = state.item is DetailItem.RouteDetail
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         topBar = if (isRoute) ({
             TopAppBar(
@@ -120,6 +129,7 @@ fun ItemDetailScreen(
                 onRemoveMedia = { viewModel.removePoiMediaItem(it) },
                 onNavigate = onNavigate,
                 onAddToPlan = onAddToPlan,
+                onShowMessage = { topToastMessage = it },
                 context = context,
             )
 
@@ -129,9 +139,12 @@ fun ItemDetailScreen(
                 onNavigateBack = onNavigateBack,
                 onNavigateToEdit = onNavigateToEditRoute,
                 onDeleteClick = { viewModel.deleteRoute(it) },
+                onShowMessage = { topToastMessage = it },
                 context = context,
             )
         }
+    }
+        TopToast(message = topToastMessage, onDismiss = { topToastMessage = null })
     }
 }
 
@@ -151,6 +164,7 @@ private fun PoiDetailContent(
     onRemoveMedia: (index: Int) -> Unit,
     onNavigate: ((lat: Double, lng: Double) -> Unit)? = null,
     onAddToPlan: ((PlanDestination) -> Unit)? = null,
+    onShowMessage: (String) -> Unit = {},
     context: android.content.Context,
 ) {
     val poi = item.poi
@@ -185,6 +199,8 @@ private fun PoiDetailContent(
                     onItemClick = { index -> onOpenMediaPreview(poi.id, index, item.mediaPaths) },
                     modifier = Modifier.height(galleryHeight),
                 )
+            } else {
+                NoMediaPlaceholder(modifier = Modifier.height(galleryHeight))
             }
 
             PoiInfoBlock(
@@ -229,12 +245,10 @@ private fun PoiDetailContent(
                         }
                     } else {
                         lastDeleteClickTime = now
-                        android.widget.Toast.makeText(
-                            context, "Tap again quickly to remove POI", android.widget.Toast.LENGTH_SHORT
-                        ).show()
+                        onShowMessage("Tap again quickly to remove POI")
                     }
                 },
-                context = context,
+                onShowMessage = onShowMessage,
             )
         }
     }
@@ -247,6 +261,7 @@ private fun RouteDetailContent(
     onNavigateBack: () -> Unit,
     onNavigateToEdit: (routeId: String) -> Unit,
     onDeleteClick: (onDeleted: () -> Unit) -> Unit,
+    onShowMessage: (String) -> Unit = {},
     context: android.content.Context,
 ) {
     val route = item.route
@@ -291,12 +306,9 @@ private fun RouteDetailContent(
                     }
                 } else {
                     lastDeleteClickTime = now
-                    android.widget.Toast.makeText(
-                        context, "Tap again quickly to remove route", android.widget.Toast.LENGTH_SHORT
-                    ).show()
+                    onShowMessage("Tap again quickly to remove route")
                 }
             },
-            context = context,
         )
     }
 }
@@ -358,12 +370,7 @@ private fun ReadOnlyPoiFullLayout(
                 modifier = Modifier.weight(1f),
             )
         } else {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            )
+            NoMediaPlaceholder(modifier = Modifier.weight(1f))
         }
 
         Column(
@@ -374,23 +381,38 @@ private fun ReadOnlyPoiFullLayout(
         ) {
             Text(
                 text = poi.name,
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.headlineMedium.copy(
+                    textDirection = poi.name.resolvedTextDirection(),
+                    textAlign = poi.name.resolvedTextAlign(),
+                ),
                 fontWeight = FontWeight.Bold,
+                modifier = Modifier.fillMaxWidth(),
             )
+            if (!poi.description.isNullOrBlank()) {
+                Text(
+                    text = poi.description,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        textDirection = poi.description.resolvedTextDirection(),
+                        textAlign = poi.description.resolvedTextAlign(),
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                )
+            }
             group?.let {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(top = 2.dp),
                 ) {
-                    Icon(
-                        imageVector = IconCatalog.iconVector(it.iconKey),
-                        contentDescription = null,
-                        modifier = Modifier.size(28.dp),
+                    PoiGroupSourceIcon(
+                        group = it,
+                        size = 16.dp,
                         tint = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        text = it.name,
-                        style = MaterialTheme.typography.headlineSmall,
+                        text = if (it.id == OSM_POI_GROUP_ID) "Open Street Map" else it.name,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                 }
@@ -449,7 +471,7 @@ private fun DetailBottomBar(
     deleteLabel: String,
     isReadOnly: Boolean = false,
     onDeleteClick: () -> Unit,
-    context: android.content.Context? = null,
+    onShowMessage: (String) -> Unit = {},
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -460,9 +482,7 @@ private fun DetailBottomBar(
             Button(
                 onClick = {
                     if (isReadOnly) {
-                        android.widget.Toast.makeText(
-                            context, "Cannot edit this POI", android.widget.Toast.LENGTH_SHORT
-                        ).show()
+                        onShowMessage("Cannot edit this POI")
                     } else {
                         onEditClick()
                     }
