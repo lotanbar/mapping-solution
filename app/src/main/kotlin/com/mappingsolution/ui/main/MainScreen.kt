@@ -60,6 +60,7 @@ import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.data.places.OSM_VIEWPORT_LIMIT
 import com.mappingsolution.data.recording.RecordingEvent
 import com.mappingsolution.data.recording.RecordingState
+import com.mappingsolution.ui.common.TopToast
 import com.mappingsolution.ui.main.components.BottomActionPanel
 import com.mappingsolution.ui.main.components.MapComponent
 import com.mappingsolution.ui.recording.RecordingViewModel
@@ -96,27 +97,25 @@ fun MainScreen(
     val currentMapStyle by viewModel.mapStyle.collectAsState()
     val hillshadeVisible by viewModel.hillshadeVisible.collectAsState()
     val rasterLayers by viewModel.rasterLayers.collectAsState()
+    val baseMapVisible by viewModel.baseMapVisible.collectAsState()
     val searchPreviewLocation by viewModel.searchPreviewLocation.collectAsState()
     val googleQuotaExhausted by viewModel.googlePlacesRepository.isQuotaExhausted.collectAsState()
+    val isPoisLoading by viewModel.isPoisLoading.collectAsState()
+    var quotaToastMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(googleQuotaExhausted) {
         if (googleQuotaExhausted) {
-            android.widget.Toast.makeText(
-                context,
-                "Google POIs unavailable: daily API quota reached. They'll return tomorrow.",
-                android.widget.Toast.LENGTH_LONG,
-            ).show()
+            quotaToastMessage = "Google POIs unavailable: daily API quota reached. They'll return tomorrow."
         }
     }
 
-    // Viewport allocation: 20 Google + 20 Overpass/Imported (40 total).
-    // Imported claims up to 10 of the 20 Overpass slots; Overpass gets the remainder.
+    // Viewport allocation: 20 Google + 20 OSM + up to 500 imported (independent budgets).
     // Respect each source's group-level visibility toggle (set from the Library screen).
     val googleGroupVisible = groups.find { it.id == GOOGLE_PLACES_GROUP_ID }?.isVisible != false
     val osmGroupVisible = groups.find { it.id == OSM_POI_GROUP_ID }?.isVisible != false
     val googlePlaces = if (googleGroupVisible) googlePlacesRaw.take(GOOGLE_PLACES_MAX_RESULTS) else emptyList()
     val bulkPois = bulkPoisRaw.take(IMPORTED_POI_VIEWPORT_LIMIT)
-    val osmPois = if (osmGroupVisible) osmPoisRaw.take(OSM_VIEWPORT_LIMIT - bulkPois.size) else emptyList()
+    val osmPois = if (osmGroupVisible) osmPoisRaw.take(OSM_VIEWPORT_LIMIT) else emptyList()
 
     var isFetchingLocation by remember { mutableStateOf(false) }
     var locationError by remember { mutableStateOf<String?>(null) }
@@ -342,6 +341,7 @@ fun MainScreen(
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        TopToast(message = quotaToastMessage, onDismiss = { quotaToastMessage = null })
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 MapComponent(
@@ -366,6 +366,7 @@ fun MainScreen(
                     mapStyle = currentMapStyle,
                     hillshadeVisible = hillshadeVisible,
                     rasterLayers = rasterLayers,
+                    baseMapVisible = baseMapVisible,
                     onCameraIdle = viewModel::saveCameraPosition,
                     onBoundsChanged = { north, south, east, west, lat, lng, zoom, bearing, tilt ->
                         viewModel.onCameraChanged(lat, lng, zoom, bearing, tilt, north, south, east, west)
@@ -379,10 +380,13 @@ fun MainScreen(
                         }
                     },
                     onDoubleTap = {
-                        if (!isLocationEnabled(context)) {
-                            locationServicesDisabled = true
-                        } else {
-                            scope.launch {
+                        val hasPerm = ContextCompat.checkSelfPermission(
+                            context, Manifest.permission.ACCESS_FINE_LOCATION
+                        ) == PackageManager.PERMISSION_GRANTED
+                        when {
+                            !hasPerm -> permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                            !isLocationEnabled(context) -> locationServicesDisabled = true
+                            else -> scope.launch {
                                 val loc = withTimeoutOrNull(10_000L) { fetchCurrentLocation(context) }
                                 if (loc != null) flyToTarget = loc
                                 else locationError = "Could not get a GPS fix. Try moving outdoors or waiting a moment."
@@ -430,6 +434,31 @@ fun MainScreen(
                                 color = androidx.compose.ui.graphics.Color.White,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
+                        }
+                    }
+
+                    if (isPoisLoading) {
+                        Surface(
+                            shape = MaterialTheme.shapes.large,
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f),
+                            shadowElevation = 2.dp,
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "Loading POIs…",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
 
@@ -501,6 +530,7 @@ fun MainScreen(
 
 @SuppressLint("MissingPermission")
 private suspend fun fetchCurrentLocation(context: Context): Pair<Double, Double>? {
+    val tag = "LocationFetch"
     val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
     val providers = listOf(
         LocationManager.GPS_PROVIDER,
@@ -510,38 +540,66 @@ private suspend fun fetchCurrentLocation(context: Context): Pair<Double, Double>
     // Try last-known location first (fast path)
     for (provider in providers) {
         runCatching {
-            if (lm.isProviderEnabled(provider)) {
+            val enabled = lm.isProviderEnabled(provider)
+            android.util.Log.d(tag, "Last-known check: provider=$provider enabled=$enabled")
+            if (enabled) {
                 val loc = lm.getLastKnownLocation(provider)
+                android.util.Log.d(tag, "  getLastKnownLocation -> $loc")
                 if (loc != null && isValidCoordinate(loc.latitude, loc.longitude)) {
+                    android.util.Log.d(tag, "  Using last-known from $provider: ${loc.latitude}, ${loc.longitude}")
                     return loc.latitude to loc.longitude
                 }
             }
-        }
+        }.onFailure { android.util.Log.w(tag, "  Exception for $provider: $it") }
     }
-    // Request a fresh fix from the best available enabled provider
-    val bestProvider = providers.firstOrNull {
+    // Request a fresh fix from ALL enabled providers simultaneously; first response wins.
+    val enabledProviders = providers.filter {
         runCatching { lm.isProviderEnabled(it) }.getOrDefault(false)
-    } ?: return null
+    }
+    android.util.Log.d(tag, "Requesting fresh fix from enabled providers: $enabledProviders")
+    if (enabledProviders.isEmpty()) {
+        android.util.Log.w(tag, "No enabled providers — returning null")
+        return null
+    }
 
     return suspendCancellableCoroutine { cont ->
+        val activeProviders = mutableListOf<String>()
         val listener = object : LocationListener {
             override fun onLocationChanged(location: Location) {
-                lm.removeUpdates(this)
+                android.util.Log.d(tag, "onLocationChanged: provider=${location.provider} lat=${location.latitude} lng=${location.longitude}")
                 if (!cont.isCompleted) {
+                    runCatching { lm.removeUpdates(this) }
                     val result = if (isValidCoordinate(location.latitude, location.longitude))
                         location.latitude to location.longitude else null
+                    android.util.Log.d(tag, "  Resuming with result=$result")
                     cont.resume(result)
                 }
             }
             override fun onProviderDisabled(provider: String) {
-                if (!cont.isCompleted) cont.resume(null)
+                android.util.Log.w(tag, "onProviderDisabled: $provider (remaining: $activeProviders)")
+                activeProviders.remove(provider)
+                if (activeProviders.isEmpty() && !cont.isCompleted) {
+                    android.util.Log.w(tag, "All providers disabled — returning null")
+                    cont.resume(null)
+                }
             }
         }
-        runCatching {
-            @Suppress("DEPRECATION")
-            lm.requestSingleUpdate(bestProvider, listener, Looper.getMainLooper())
-            cont.invokeOnCancellation { runCatching { lm.removeUpdates(listener) } }
-        }.onFailure { if (!cont.isCompleted) cont.resume(null) }
+        for (provider in enabledProviders) {
+            runCatching {
+                @Suppress("DEPRECATION")
+                lm.requestSingleUpdate(provider, listener, Looper.getMainLooper())
+                activeProviders.add(provider)
+                android.util.Log.d(tag, "Registered requestSingleUpdate for $provider")
+            }.onFailure { android.util.Log.w(tag, "Failed to register $provider: $it") }
+        }
+        if (activeProviders.isEmpty() && !cont.isCompleted) {
+            android.util.Log.w(tag, "No providers registered — returning null")
+            cont.resume(null)
+        }
+        cont.invokeOnCancellation {
+            android.util.Log.d(tag, "Coroutine cancelled — removing updates")
+            runCatching { lm.removeUpdates(listener) }
+        }
     }
 }
 

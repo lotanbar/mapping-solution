@@ -14,6 +14,7 @@ import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.model.Route
 import com.mappingsolution.data.model.RoutePoint
+import com.mappingsolution.data.places.FetchedBounds
 import com.mappingsolution.data.places.GOOGLE_PLACES_FETCH_DEBOUNCE_MS
 import com.mappingsolution.data.places.GooglePlacesRepository
 import com.mappingsolution.data.places.NEARBY_POI_MIN_ZOOM
@@ -91,6 +92,7 @@ class MainViewModel @Inject constructor(
     val mapStyle: MutableStateFlow<MapStyle> = mapLayersState.mapStyle
     val hillshadeVisible: MutableStateFlow<Boolean> = mapLayersState.hillshadeVisible
     val rasterLayers: StateFlow<List<com.mappingsolution.data.model.RasterLayer>> = mapLayersState.rasterLayers
+    val baseMapVisible: StateFlow<Boolean> = mapLayersState.baseMapVisible
 
     /** Lat/lng of the search result last tapped in SearchNPlan — drives map camera + preview pin. */
     val searchPreviewLocation: StateFlow<Pair<Double, Double>?> =
@@ -105,6 +107,12 @@ class MainViewModel @Inject constructor(
     private var googleRefreshJob: Job? = null
     private var osmRefreshJob: Job? = null
     private var bulkRefreshJob: Job? = null
+
+    /** Last viewport bounds for which POI fetches were dispatched. */
+    @Volatile private var lastDispatchedBounds: FetchedBounds? = null
+
+    /** Tolerance in degrees (~110 m) used to consider two viewports identical. */
+    private val BOUNDS_EPSILON = 0.001
 
     init {
         viewModelScope.launch {
@@ -134,8 +142,26 @@ class MainViewModel @Inject constructor(
             googlePlacesRepository.clear()
             osmPoiRepository.clear()
             bulkPoiRepository.clear()
+            lastDispatchedBounds = null
             return
         }
+
+        // Skip re-fetching if the viewport hasn't meaningfully changed (e.g. returning from a
+        // POI detail screen — same map position, no new data to load).
+        // Epsilon of 0.001° ≈ 110 m — well above MapLibre's floating-point jitter on resume.
+        val newBounds = FetchedBounds(north, south, east, west)
+        val prev = lastDispatchedBounds
+        if (prev != null &&
+            kotlin.math.abs(newBounds.north - prev.north) < BOUNDS_EPSILON &&
+            kotlin.math.abs(newBounds.south - prev.south) < BOUNDS_EPSILON &&
+            kotlin.math.abs(newBounds.east  - prev.east)  < BOUNDS_EPSILON &&
+            kotlin.math.abs(newBounds.west  - prev.west)  < BOUNDS_EPSILON
+        ) {
+            android.util.Log.d("MainViewModel", "onCameraChanged: SKIPPED — bounds unchanged (within ${BOUNDS_EPSILON}°)")
+            return
+        }
+        android.util.Log.d("MainViewModel", "onCameraChanged: PROCEEDING — zoom=$zoom prev=$prev new=$newBounds")
+        lastDispatchedBounds = newBounds
 
         googleRefreshJob?.cancel()
         googleRefreshJob = viewModelScope.launch {
@@ -149,7 +175,12 @@ class MainViewModel @Inject constructor(
             osmPoiRepository.refreshForViewport(north, south, east, west, zoom)
         }
 
-        val bulkGroups = groups.value.filter { it.isBulk && it.importComplete }
+        val allGroups = groups.value
+        val bulkGroups = allGroups.filter { it.isBulk && it.importComplete }
+        android.util.Log.d("MainViewModel", "onCameraChanged: zoom=$zoom, total groups=${allGroups.size}, bulk+complete=${bulkGroups.size}")
+        allGroups.filter { it.isBulk }.forEach { g ->
+            android.util.Log.d("MainViewModel", "  bulk group '${g.name}' importComplete=${g.importComplete} isVisible=${g.isVisible}")
+        }
         if (bulkGroups.isNotEmpty()) {
             bulkRefreshJob?.cancel()
             bulkRefreshJob = viewModelScope.launch {
