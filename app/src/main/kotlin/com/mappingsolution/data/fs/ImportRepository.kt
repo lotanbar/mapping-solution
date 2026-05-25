@@ -13,6 +13,8 @@ import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 import java.io.File
 import java.io.InputStream
+import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
 import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -43,12 +45,19 @@ class ImportRepository @Inject constructor(
         onProgress: suspend (phase: String, done: Int, total: Int) -> Unit = { _, _, _ -> },
     ): ImportResult = withContext(Dispatchers.IO) {
         val folder = File(path)
-        val folderName = folder.name.takeIf { it.isNotEmpty() } ?: "Import"
 
         val gpxFiles = folder.listFiles()
             ?.filter { it.isFile && it.extension.lowercase() == "gpx" }
             ?: emptyList()
         val imagesDir = File(folder, "images").takeIf { it.isDirectory }
+
+        // For a single-GPX folder (including ZIP imports), name the group after the GPX file
+        // so it matches any previously-imported group of the same name and triggers purge+replace.
+        val folderName = if (gpxFiles.size == 1) {
+            gpxFiles.first().nameWithoutExtension
+        } else {
+            folder.name.takeIf { it.isNotEmpty() } ?: "Import"
+        }
 
         var routesCount = 0
         var skipped = 0
@@ -99,66 +108,19 @@ class ImportRepository @Inject constructor(
             }
         }
 
-        // ── Phase 3: Clear previous import + save ─────────────────────────────
+        // ── Phase 3: Save ─────────────────────────────────────────────────────
         if (allPois.isNotEmpty()) {
-            val groupId = groupRepository.purgeAndCreateForImport(folderName, poiRepository) { phase, done, total ->
-                onProgress(phase, done, total)
-            }
-            val total = allPois.size
-
             // Pre-resolve image filenames so JSONL paths match the actual files on disk.
             // AmudAnan stores originals as _x_200.avif thumbnails, so "photo.jpg" → "photo_x_200.avif".
             val imageIndex = imagesDir?.let { buildImageIndex(it) } ?: emptyMap()
             val resolvedPois = allPois.map { poi ->
-                if (imagesDir == null || poi.mediaPaths.isEmpty()) return@map poi
-                val resolvedPaths = poi.mediaPaths.map { filename ->
+                if (poi.mediaPaths.isEmpty()) return@map poi
+                if (imagesDir == null) return@map poi.copy(mediaPaths = emptyList())
+                poi.copy(mediaPaths = poi.mediaPaths.map { filename ->
                     resolveImageFile(imagesDir, filename, imageIndex)?.name ?: filename
-                }
-                poi.copy(mediaPaths = resolvedPaths)
+                })
             }
-
-            // Write all POIs as a single bulk_pois.jsonl file (one JSON object per line)
-            val bulkFile = storageManager.getBulkPoisFile(folderName.trim(), groupId)
-            bulkFile.parentFile?.mkdirs()
-            onProgress("Writing to storage…", 0, total)
-            var lastEmit = 0L
-            bulkFile.bufferedWriter().use { writer ->
-                for ((i, poi) in resolvedPois.withIndex()) {
-                    writer.write(BulkPoiRepository.serializePoi(poi.copy(groupId = groupId)))
-                    writer.newLine()
-                    val now = System.currentTimeMillis()
-                    if (now - lastEmit >= 32 || i == total - 1) {
-                        lastEmit = now
-                        onProgress("Writing to storage…", i + 1, total)
-                    }
-                }
-            }
-
-            // Copy images: each POI's referenced files go to its own media dir.
-            if (imagesDir != null) {
-                val poisWithImages = resolvedPois.filter { it.mediaPaths.isNotEmpty() }
-                onProgress("Copying images…", 0, poisWithImages.size)
-                var doneCount = 0
-                for (poi in poisWithImages) {
-                    val destDir = storageManager.getPoiMediaDir(poi.name, poi.id)
-                    destDir.mkdirs()
-                    for (filename in poi.mediaPaths) {
-                        val srcFile = File(imagesDir, filename).takeIf { it.isFile }
-                            ?: resolveImageFile(imagesDir, filename, imageIndex)
-                            ?: continue
-                        val destFile = File(destDir, srcFile.name)
-                        try {
-                            srcFile.copyTo(destFile, overwrite = true)
-                        } catch (e: Exception) {
-                            Log.w("ImportRepository", "Failed to copy image '${srcFile.name}': ${e.message}")
-                        }
-                    }
-                    doneCount++
-                    onProgress("Copying images…", doneCount, poisWithImages.size)
-                }
-            }
-
-            groupRepository.markImportComplete(groupId, total)
+            saveImport(folderName, resolvedPois, imagesDir, imageIndex, onProgress)
         }
 
         if (allRoutes.isNotEmpty()) {
@@ -244,56 +206,15 @@ class ImportRepository @Inject constructor(
         var routesCount = 0
 
         if (allPois.isNotEmpty()) {
-            val groupId = groupRepository.purgeAndCreateForImport(groupName, poiRepository) { phase, done, total ->
-                onProgress(phase, done, total)
-            }
-            val total = allPois.size
             val imageIndex = imagesDir?.let { buildImageIndex(it) } ?: emptyMap()
             val resolvedPois = allPois.map { poi ->
-                if (imagesDir == null || poi.mediaPaths.isEmpty()) return@map poi
-                val resolvedPaths = poi.mediaPaths.map { filename ->
+                if (poi.mediaPaths.isEmpty()) return@map poi
+                if (imagesDir == null) return@map poi.copy(mediaPaths = emptyList())
+                poi.copy(mediaPaths = poi.mediaPaths.map { filename ->
                     resolveImageFile(imagesDir, filename, imageIndex)?.name ?: filename
-                }
-                poi.copy(mediaPaths = resolvedPaths)
+                })
             }
-            val bulkFile = storageManager.getBulkPoisFile(groupName.trim(), groupId)
-            bulkFile.parentFile?.mkdirs()
-            onProgress("Writing to storage…", 0, total)
-            var lastEmit = 0L
-            bulkFile.bufferedWriter().use { writer ->
-                for ((i, poi) in resolvedPois.withIndex()) {
-                    writer.write(BulkPoiRepository.serializePoi(poi.copy(groupId = groupId)))
-                    writer.newLine()
-                    val now = System.currentTimeMillis()
-                    if (now - lastEmit >= 32 || i == total - 1) {
-                        lastEmit = now
-                        onProgress("Writing to storage…", i + 1, total)
-                    }
-                }
-            }
-            if (imagesDir != null) {
-                val poisWithImages = resolvedPois.filter { it.mediaPaths.isNotEmpty() }
-                onProgress("Copying images…", 0, poisWithImages.size)
-                var doneCount = 0
-                for (poi in poisWithImages) {
-                    val destDir = storageManager.getPoiMediaDir(poi.name, poi.id)
-                    destDir.mkdirs()
-                    for (filename in poi.mediaPaths) {
-                        val srcFile = File(imagesDir, filename).takeIf { it.isFile }
-                            ?: resolveImageFile(imagesDir, filename, imageIndex)
-                            ?: continue
-                        val destFile = File(destDir, srcFile.name)
-                        try {
-                            srcFile.copyTo(destFile, overwrite = true)
-                        } catch (e: Exception) {
-                            Log.w("ImportRepository", "Failed to copy image '${srcFile.name}': ${e.message}")
-                        }
-                    }
-                    doneCount++
-                    onProgress("Copying images…", doneCount, poisWithImages.size)
-                }
-            }
-            groupRepository.markImportComplete(groupId, total)
+            saveImport(groupName, resolvedPois, imagesDir, imageIndex, onProgress)
         }
 
         if (allRoutes.isNotEmpty()) {
@@ -315,7 +236,279 @@ class ImportRepository @Inject constructor(
         )
     }
 
+    // ── ZIP import ────────────────────────────────────────────────────────────
+
+    /**
+     * Imports a ZIP file that contains a GPX file and an optional `images/` folder.
+     * The ZIP is extracted to a temp directory, then processed with [importFolder].
+     */
+    suspend fun importZipFile(
+        zipPath: String,
+        onProgress: suspend (phase: String, done: Int, total: Int) -> Unit = { _, _, _ -> },
+    ): ImportResult = withContext(Dispatchers.IO) {
+        val zipFile = File(zipPath)
+        if (!zipFile.isFile || zipFile.extension.lowercase() != "zip") {
+            return@withContext ImportResult(errors = listOf("Not a valid ZIP file: ${zipFile.name}"))
+        }
+
+        val tempDir = File(context.cacheDir, "zip_import_${System.currentTimeMillis()}")
+        try {
+            onProgress("Reading ZIP index…", 0, 0)
+            val totalEntries = ZipFile(zipFile).use { it.size() }
+            onProgress("Extracting ZIP…", 0, totalEntries)
+            extractZip(zipFile, tempDir) { done -> onProgress("Extracting ZIP…", done, totalEntries) }
+            importFolder(tempDir.absolutePath, onProgress)
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    private suspend fun extractZip(
+        zipFile: File,
+        destDir: File,
+        onEntry: suspend (done: Int) -> Unit = {},
+    ) {
+        destDir.mkdirs()
+        val destCanonical = destDir.canonicalPath
+        var extracted = 0
+        var lastEmit = 0L
+        ZipInputStream(zipFile.inputStream().buffered()).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                val entryFile = File(destDir, entry.name)
+                // Guard against path-traversal attacks
+                if (!entryFile.canonicalPath.startsWith(destCanonical + File.separator) &&
+                    entryFile.canonicalPath != destCanonical) {
+                    zis.closeEntry()
+                    entry = zis.nextEntry
+                    continue
+                }
+                if (entry.isDirectory) {
+                    entryFile.mkdirs()
+                } else {
+                    entryFile.parentFile?.mkdirs()
+                    entryFile.outputStream().use { zis.copyTo(it) }
+                }
+                zis.closeEntry()
+                extracted++
+                val now = System.currentTimeMillis()
+                if (now - lastEmit >= 32) {
+                    lastEmit = now
+                    onEntry(extracted)
+                }
+                entry = zis.nextEntry
+            }
+        }
+    }
+
     // ── GPX parser ────────────────────────────────────────────────────────────
+
+    /**
+     * Core save logic used by both [importFolder] and [importSingleFile].
+     * Detects re-import vs first import via [GroupFileRepository.prepareForReimport].
+     */
+    private suspend fun saveImport(
+        groupName: String,
+        resolvedPois: List<Poi>,
+        imagesDir: File?,
+        imageIndex: Map<String, File>,
+        onProgress: suspend (phase: String, done: Int, total: Int) -> Unit,
+    ) {
+        val reimportInfo = groupRepository.prepareForReimport(groupName)
+        Log.i("ImportRepository", "saveImport: groupName='$groupName' reimport=${reimportInfo != null} pois=${resolvedPois.size}")
+
+        if (reimportInfo != null) {
+            // ── SMART RE-IMPORT ──────────────────────────────────────────────
+            val (groupId, storedName) = reimportInfo
+            val bulkFile = storageManager.getBulkPoisFile(storedName.trim(), groupId)
+            bulkFile.parentFile?.mkdirs()
+
+            // Count existing lines for "Comparing" phase progress %
+            val existingLineCount = if (bulkFile.isFile) {
+                bulkFile.bufferedReader().use { r -> var n = 0; while (r.readLine() != null) n++; n }
+            } else 0
+            Log.i("ImportRepository", "Re-import: existingLines=$existingLineCount bulkFile=${bulkFile.path}")
+
+            // Load existing POIs, keyed by identity (name|lat|lng)
+            val existingByKey = HashMap<String, Poi>(existingLineCount * 2)
+            if (existingLineCount > 0) {
+                onProgress("Comparing with previous import…", 0, existingLineCount)
+                var compareCount = 0
+                var compareLastEmit = 0L
+                bulkFile.bufferedReader().use { reader ->
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        runCatching {
+                            val poi = BulkPoiRepository.deserializePoi(line!!)
+                            existingByKey["${poi.name}|${poi.lat}|${poi.lng}"] = poi
+                        }
+                        compareCount++
+                        val now = System.currentTimeMillis()
+                        if (now - compareLastEmit >= 32 || compareCount == existingLineCount) {
+                            compareLastEmit = now
+                            onProgress("Comparing with previous import…", compareCount, existingLineCount)
+                        }
+                    }
+                }
+            }
+
+            // Categorize incoming POIs; assign stable IDs for matched ones
+            val poisToWrite = ArrayList<Poi>(resolvedPois.size)
+            val addedPoiIds = HashSet<String>()
+            val updatedWithImageChanges = ArrayList<Poi>()
+
+            for (incoming in resolvedPois) {
+                val key = "${incoming.name}|${incoming.lat}|${incoming.lng}"
+                val existing = existingByKey[key]
+                val finalPoi = if (existing != null) {
+                    incoming.copy(id = existing.id, groupId = groupId)
+                } else {
+                    incoming.copy(groupId = groupId).also { addedPoiIds.add(it.id) }
+                }
+                poisToWrite.add(finalPoi)
+                if (existing != null && existing.mediaPaths.sorted() != incoming.mediaPaths.sorted()) {
+                    updatedWithImageChanges.add(finalPoi)
+                }
+            }
+
+            // Removed POIs: in existing but not in incoming
+            val incomingKeys = resolvedPois.mapTo(HashSet(resolvedPois.size * 2)) { "${it.name}|${it.lat}|${it.lng}" }
+            val removedPois = existingByKey.values.filter { "${it.name}|${it.lat}|${it.lng}" !in incomingKeys }
+
+            Log.i("ImportRepository", "Diff: added=${addedPoiIds.size} removed=${removedPois.size} updatedImages=${updatedWithImageChanges.size} unchanged=${resolvedPois.size - addedPoiIds.size - updatedWithImageChanges.size}")
+
+            // Write new JSONL
+            val total = poisToWrite.size
+            onProgress("Writing to storage…", 0, total)
+            var writeLastEmit = 0L
+            bulkFile.bufferedWriter().use { writer ->
+                for ((i, poi) in poisToWrite.withIndex()) {
+                    writer.write(BulkPoiRepository.serializePoi(poi))
+                    writer.newLine()
+                    val now = System.currentTimeMillis()
+                    if (now - writeLastEmit >= 32 || i == total - 1) {
+                        writeLastEmit = now
+                        onProgress("Writing to storage…", i + 1, total)
+                    }
+                }
+            }
+
+            // Delete removed POIs' image dirs
+            for (poi in removedPois) {
+                storageManager.getPoiMediaDir(poi.name, poi.id).deleteRecursively()
+            }
+
+            // Image sync: added POIs (copy all) + updated POIs with mediaPaths changes (sync by filename+size)
+            val toSync = ArrayList<Poi>(addedPoiIds.size + updatedWithImageChanges.size).also {
+                it.addAll(poisToWrite.filter { p -> p.id in addedPoiIds })
+                it.addAll(updatedWithImageChanges)
+            }
+            if (toSync.isEmpty()) {
+                Log.i("ImportRepository", "Images up to date — nothing to sync")
+                onProgress("Images up to date", 0, 0)
+            } else {
+                Log.i("ImportRepository", "Syncing images for ${toSync.size} POIs (${addedPoiIds.size} added, ${updatedWithImageChanges.size} updated)")
+                onProgress("Syncing images…", 0, toSync.size)
+                var syncCount = 0
+                for (poi in toSync) {
+                    if (imagesDir != null) {
+                        val destDir = storageManager.getPoiMediaDir(poi.name, poi.id)
+                        if (poi.id in addedPoiIds) {
+                            destDir.mkdirs()
+                            for (filename in poi.mediaPaths) {
+                                val srcFile = File(imagesDir, filename).takeIf { it.isFile }
+                                    ?: resolveImageFile(imagesDir, filename, imageIndex)
+                                    ?: continue
+                                runCatching { srcFile.copyTo(File(destDir, srcFile.name), overwrite = true) }
+                                    .onFailure { Log.w("ImportRepository", "Failed to copy '${srcFile.name}': ${it.message}") }
+                            }
+                        } else {
+                            syncPoiImages(imagesDir, destDir, poi.mediaPaths, imageIndex)
+                        }
+                    }
+                    syncCount++
+                    onProgress("Syncing images…", syncCount, toSync.size)
+                }
+            }
+
+            groupRepository.markImportComplete(groupId, total)
+
+        } else {
+            // ── FIRST IMPORT ────────────────────────────────────────────────
+            Log.i("ImportRepository", "First import for group='$groupName', pois=${resolvedPois.size}")
+            val groupId = groupRepository.purgeAndCreateForImport(groupName, poiRepository) { phase, done, total ->
+                onProgress(phase, done, total)
+            }
+            val total = resolvedPois.size
+
+            val bulkFile = storageManager.getBulkPoisFile(groupName.trim(), groupId)
+            bulkFile.parentFile?.mkdirs()
+            onProgress("Writing to storage…", 0, total)
+            var writeLastEmit = 0L
+            bulkFile.bufferedWriter().use { writer ->
+                for ((i, poi) in resolvedPois.withIndex()) {
+                    writer.write(BulkPoiRepository.serializePoi(poi.copy(groupId = groupId)))
+                    writer.newLine()
+                    val now = System.currentTimeMillis()
+                    if (now - writeLastEmit >= 32 || i == total - 1) {
+                        writeLastEmit = now
+                        onProgress("Writing to storage…", i + 1, total)
+                    }
+                }
+            }
+
+            if (imagesDir != null) {
+                val poisWithImages = resolvedPois.filter { it.mediaPaths.isNotEmpty() }
+                Log.i("ImportRepository", "Copying images for ${poisWithImages.size} POIs")
+                onProgress("Copying images…", 0, poisWithImages.size)
+                var doneCount = 0
+                for (poi in poisWithImages) {
+                    val destDir = storageManager.getPoiMediaDir(poi.name, poi.id)
+                    destDir.mkdirs()
+                    for (filename in poi.mediaPaths) {
+                        val srcFile = File(imagesDir, filename).takeIf { it.isFile }
+                            ?: resolveImageFile(imagesDir, filename, imageIndex)
+                            ?: continue
+                        runCatching { srcFile.copyTo(File(destDir, srcFile.name), overwrite = true) }
+                            .onFailure { Log.w("ImportRepository", "Failed to copy image '${srcFile.name}': ${it.message}") }
+                    }
+                    doneCount++
+                    onProgress("Copying images…", doneCount, poisWithImages.size)
+                }
+            }
+
+            groupRepository.markImportComplete(groupId, total)
+        }
+    }
+
+    /**
+     * - Deletes files in [destDir] not in [expectedFilenames]
+     * - Copies files from [srcDir] that are missing or differ in size (incoming wins)
+     * - Skips files with matching filename AND size
+     */
+    private fun syncPoiImages(
+        srcDir: File,
+        destDir: File,
+        expectedFilenames: List<String>,
+        imageIndex: Map<String, File>,
+    ) {
+        destDir.mkdirs()
+        val expected = expectedFilenames.toHashSet()
+
+        // Delete stale files no longer referenced
+        destDir.listFiles()?.forEach { f -> if (f.name !in expected) f.delete() }
+
+        // Copy new or changed files
+        for (filename in expectedFilenames) {
+            val srcFile = File(srcDir, filename).takeIf { it.isFile }
+                ?: resolveImageFile(srcDir, filename, imageIndex)
+                ?: continue
+            val destFile = File(destDir, srcFile.name)
+            if (destFile.isFile && destFile.length() == srcFile.length()) continue
+            runCatching { srcFile.copyTo(destFile, overwrite = true) }
+                .onFailure { Log.w("ImportRepository", "Failed to sync '${srcFile.name}': ${it.message}") }
+        }
+    }
 
     private suspend fun parseGpx(
         stream: InputStream,

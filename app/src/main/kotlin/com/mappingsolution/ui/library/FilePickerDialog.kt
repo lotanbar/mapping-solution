@@ -35,7 +35,7 @@ import androidx.compose.ui.window.Dialog
 import java.io.File
 
 /**
- * A filesystem-browsing dialog that lets the user pick a file matching [fileExtension]
+ * A filesystem-browsing dialog that lets the user pick a file matching any of [fileExtensions]
  * OR select the current folder via the "Use this folder" button.
  * Directories are navigable; matching files are selectable.
  * [onFolderSelected] is called when the user taps "Use this folder".
@@ -43,7 +43,7 @@ import java.io.File
 @Composable
 fun FilePickerDialog(
     initialPath: String,
-    fileExtension: String,
+    fileExtensions: List<String>,
     onFileSelected: (File) -> Unit,
     onFolderSelected: ((File) -> Unit)? = null,
     onDismiss: () -> Unit,
@@ -60,7 +60,7 @@ fun FilePickerDialog(
 
     val entries = remember(currentDir) {
         currentDir.listFiles()
-            ?.filter { !it.name.startsWith(".") && (it.isDirectory || it.name.endsWith(fileExtension, ignoreCase = true)) }
+            ?.filter { !it.name.startsWith(".") && (it.isDirectory || fileExtensions.any { ext -> it.name.endsWith(ext, ignoreCase = true) }) }
             ?.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
     }
 
@@ -118,8 +118,9 @@ fun FilePickerDialog(
                             )
                         }
                         entries.isEmpty() -> item {
+                            val extList = fileExtensions.joinToString(" / ") { "*$it" }
                             Text(
-                                "No *$fileExtension files or folders here.",
+                                "No $extList files or folders here.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(12.dp),

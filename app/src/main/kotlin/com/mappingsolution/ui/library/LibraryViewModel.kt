@@ -549,7 +549,8 @@ class LibraryViewModel @Inject constructor(
     }
 
     private fun reportProgress(phase: String, done: Int, total: Int) {
-        _importProgressText.value = if (total > 0) "$phase $done / $total" else phase
+        val pct = if (total > 0) " — ${done * 100 / total}%" else ""
+        _importProgressText.value = "$phase$pct"
         _importProgressFraction.value = if (total > 0) done.toFloat() / total else 0f
     }
 
@@ -564,6 +565,22 @@ class LibraryViewModel @Inject constructor(
         _importResult.value = null
         _isBusy.value = true
         _importingFolderName.value = folderName
+        _importProgressText.value = "Starting…"
+        _importProgressFraction.value = 0f
+        workManager.enqueueUniqueWork(IMPORT_WORK_NAME, ExistingWorkPolicy.REPLACE, request)
+    }
+
+    fun importZipFile(filePath: String) {
+        val fileName = java.io.File(filePath).nameWithoutExtension.takeIf { it.isNotEmpty() } ?: "Import"
+        val request = OneTimeWorkRequestBuilder<ImportWorker>()
+            .setInputData(workDataOf(ImportWorker.KEY_ZIP_PATH to filePath))
+            .addTag("$TAG_FOLDER_PREFIX$fileName")
+            .build()
+        currentWorkId = request.id
+        dismissedWorkId = null
+        _importResult.value = null
+        _isBusy.value = true
+        _importingFolderName.value = fileName
         _importProgressText.value = "Starting…"
         _importProgressFraction.value = 0f
         workManager.enqueueUniqueWork(IMPORT_WORK_NAME, ExistingWorkPolicy.REPLACE, request)

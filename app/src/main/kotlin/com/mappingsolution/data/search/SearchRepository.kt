@@ -1,6 +1,7 @@
 package com.mappingsolution.data.search
 
 import com.mappingsolution.data.fs.BulkPoiRepository
+import com.mappingsolution.data.fs.GroupFileRepository
 import com.mappingsolution.data.fs.PoiFileRepository
 import com.mappingsolution.data.model.SearchResult
 import com.mappingsolution.data.places.OsmApiService
@@ -17,6 +18,7 @@ import javax.inject.Singleton
 class SearchRepository @Inject constructor(
     private val poiFileRepository: PoiFileRepository,
     private val bulkPoiRepository: BulkPoiRepository,
+    private val groupFileRepository: GroupFileRepository,
     private val placesApiService: PlacesApiService,
     private val osmApiService: OsmApiService,
 ) {
@@ -53,9 +55,10 @@ class SearchRepository @Inject constructor(
                 .map { SearchResult.PersonalPoi(it) }
         }
 
-        val imported = async(Dispatchers.Default) {
-            bulkPoiRepository.poisInViewport.value
-                .filter { it.name.contains(q, ignoreCase = true) }
+        val imported = async(Dispatchers.IO) {
+            val bulkGroups = groupFileRepository.observeAll().first()
+                .filter { it.isBulk && it.isVisible }
+            bulkPoiRepository.searchByName(q, bulkGroups)
                 .map { SearchResult.ImportedPoi(it) }
         }
 

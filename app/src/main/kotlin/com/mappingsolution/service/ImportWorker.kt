@@ -24,22 +24,27 @@ class ImportWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         val folderPath = inputData.getString(KEY_FOLDER_PATH)
         val filePath = inputData.getString(KEY_FILE_PATH)
+        val zipPath = inputData.getString(KEY_ZIP_PATH)
 
-        if (folderPath == null && filePath == null) return Result.failure(
-            workDataOf(KEY_ERRORS to arrayOf("No folder or file path provided"))
+        if (folderPath == null && filePath == null && zipPath == null) return Result.failure(
+            workDataOf(KEY_ERRORS to arrayOf("No folder, file, or zip path provided"))
         )
 
         return try {
             setForeground(buildForegroundInfo("Starting…"))
 
-            val importResult = if (filePath != null) {
-                importRepository.importSingleFile(filePath) { phase, done, total ->
+            val importResult = when {
+                zipPath != null -> importRepository.importZipFile(zipPath) { phase, done, total ->
                     val text = if (total > 0) "$phase $done / $total" else phase
                     setForeground(buildForegroundInfo(text))
                     setProgress(workDataOf(KEY_PHASE to phase, KEY_DONE to done, KEY_TOTAL to total))
                 }
-            } else {
-                importRepository.importFolder(folderPath!!) { phase, done, total ->
+                filePath != null -> importRepository.importSingleFile(filePath) { phase, done, total ->
+                    val text = if (total > 0) "$phase $done / $total" else phase
+                    setForeground(buildForegroundInfo(text))
+                    setProgress(workDataOf(KEY_PHASE to phase, KEY_DONE to done, KEY_TOTAL to total))
+                }
+                else -> importRepository.importFolder(folderPath!!) { phase, done, total ->
                     val text = if (total > 0) "$phase $done / $total" else phase
                     setForeground(buildForegroundInfo(text))
                     setProgress(workDataOf(KEY_PHASE to phase, KEY_DONE to done, KEY_TOTAL to total))
@@ -88,6 +93,7 @@ class ImportWorker @AssistedInject constructor(
 
         const val KEY_FOLDER_PATH = "folder_path"
         const val KEY_FILE_PATH = "file_path"
+        const val KEY_ZIP_PATH = "zip_path"
         const val KEY_PHASE = "phase"
         const val KEY_DONE = "done"
         const val KEY_TOTAL = "total"

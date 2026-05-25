@@ -55,7 +55,7 @@ class ExportRepository @Inject constructor(
 
             xs.startTag("", "gpx")
             xs.attribute("", "version", "1.1")
-            xs.attribute("", "creator", "MappingSolution")
+            xs.attribute("", "creator", "mapping-solution")
             xs.attribute("", "xmlns", "http://www.topografix.com/GPX/1/1")
 
             for (poi in pois) {

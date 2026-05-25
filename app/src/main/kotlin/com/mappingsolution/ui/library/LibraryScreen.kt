@@ -44,15 +44,23 @@ import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material.icons.filled.Input
-import androidx.compose.material.icons.filled.Output
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.FolderOff
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Input
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Output
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Route
+import androidx.compose.material.icons.filled.SatelliteAlt
+import androidx.compose.material.icons.filled.Terrain
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -73,6 +81,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -90,6 +99,8 @@ import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.model.RasterLayer
 import com.mappingsolution.data.model.Route
 import com.mappingsolution.data.fs.ImportResult
+import com.mappingsolution.data.places.GOOGLE_PLACES_GROUP_ID
+import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.ui.common.IconCatalog
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
@@ -202,7 +213,7 @@ fun LibraryScreen(
     if (showMbtilesPicker) {
         FilePickerDialog(
             initialPath = "/storage/emulated/0",
-            fileExtension = ".mbtiles",
+            fileExtensions = listOf(".mbtiles"),
             onFileSelected = { file ->
                 showMbtilesPicker = false
                 viewModel.importMbtilesFile(android.net.Uri.fromFile(file))
@@ -225,9 +236,13 @@ fun LibraryScreen(
     if (showGpxFilePicker) {
         FilePickerDialog(
             initialPath = "/storage/emulated/0",
-            fileExtension = ".gpx",
+            fileExtensions = listOf(".gpx", ".zip"),
             onFileSelected = { file ->
-                viewModel.importSingleGpxFile(file.absolutePath)
+                if (file.extension.equals("zip", ignoreCase = true)) {
+                    viewModel.importZipFile(file.absolutePath)
+                } else {
+                    viewModel.importSingleGpxFile(file.absolutePath)
+                }
                 showGpxFilePicker = false
             },
             onFolderSelected = { folder ->
@@ -259,6 +274,10 @@ fun LibraryScreen(
     var showGroupPickerDialog by remember { mutableStateOf(false) }
     var incompleteRoute by remember { mutableStateOf<Route?>(null) }
 
+    // 3-tap delete guard — counter resets whenever selection mode changes; also resets after 2.5s gap
+    var deleteTapCount by remember(selectionMode) { mutableIntStateOf(0) }
+    var lastDeleteTapTime by remember(selectionMode) { mutableLongStateOf(0L) }
+
     // Back press in selection mode clears it instead of navigating away
     BackHandler(enabled = selectionMode !is LibrarySelectionMode.None) {
         viewModel.clearSelection()
@@ -268,9 +287,8 @@ fun LibraryScreen(
 
     if (showDeleteRasterLayersDialog) {
         val count = (selectionMode as? LibrarySelectionMode.RasterLayerSelection)?.selectedIds?.size ?: 0
-        DestructiveCooldownDialog(
-            title = "Delete $count layer${if (count != 1) "s" else ""}",
-            text = "This will permanently remove the selected raster layer${if (count != 1) "s" else ""} and delete their tile files. This cannot be undone.",
+        SimpleDeleteDialog(
+            title = "Delete $count layer${if (count != 1) "s" else ""}?",
             onConfirm = { showDeleteRasterLayersDialog = false; viewModel.deleteSelectedRasterLayers() },
             onDismiss = { showDeleteRasterLayersDialog = false },
         )
@@ -305,9 +323,8 @@ fun LibraryScreen(
 
     if (showDeleteGroupsDialog) {
         val count = (selectionMode as? LibrarySelectionMode.GroupSelection)?.selectedIds?.size ?: 0
-        DestructiveCooldownDialog(
-            title = "Delete $count group${if (count != 1) "s" else ""}",
-            text = "This will permanently delete the selected group${if (count != 1) "s" else ""} and all their POIs. This cannot be undone.",
+        SimpleDeleteDialog(
+            title = "Delete $count group${if (count != 1) "s" else ""}?",
             onConfirm = { showDeleteGroupsDialog = false; viewModel.deleteSelectedGroupsWithItems() },
             onDismiss = { showDeleteGroupsDialog = false },
         )
@@ -315,9 +332,8 @@ fun LibraryScreen(
 
     if (showDeleteRowsDialog) {
         val count = (selectionMode as? LibrarySelectionMode.RowSelection)?.selectedIds?.size ?: 0
-        DestructiveCooldownDialog(
-            title = "Delete $count item${if (count != 1) "s" else ""}",
-            text = "This will permanently delete the selected item${if (count != 1) "s" else ""}. This cannot be undone.",
+        SimpleDeleteDialog(
+            title = "Delete $count item${if (count != 1) "s" else ""}?",
             onConfirm = { showDeleteRowsDialog = false; viewModel.deleteSelectedRows() },
             onDismiss = { showDeleteRowsDialog = false },
         )
@@ -476,7 +492,14 @@ fun LibraryScreen(
                                 Icon(Icons.Default.FolderOff, contentDescription = "Orphan items")
                             }
                             // Destructive delete: groups + all POIs
-                            IconButton(onClick = { showDeleteGroupsDialog = true }) {
+                            IconButton(onClick = {
+                                val now = System.currentTimeMillis()
+                                if (now - lastDeleteTapTime > 2500L) deleteTapCount = 0
+                                deleteTapCount++
+                                lastDeleteTapTime = now
+                                android.widget.Toast.makeText(context, "Tap 3 times in quick succession to delete", android.widget.Toast.LENGTH_SHORT).show()
+                                if (deleteTapCount >= 3) { showDeleteGroupsDialog = true; deleteTapCount = 0 }
+                            }) {
                                 Icon(
                                     Icons.Default.Delete,
                                     contentDescription = "Delete groups and items",
@@ -512,7 +535,14 @@ fun LibraryScreen(
                                 }
                             }
                             // Delete selected rows
-                            IconButton(onClick = { showDeleteRowsDialog = true }) {
+                            IconButton(onClick = {
+                                val now = System.currentTimeMillis()
+                                if (now - lastDeleteTapTime > 2500L) deleteTapCount = 0
+                                deleteTapCount++
+                                lastDeleteTapTime = now
+                                android.widget.Toast.makeText(context, "Tap 3 times in quick succession to delete", android.widget.Toast.LENGTH_SHORT).show()
+                                if (deleteTapCount >= 3) { showDeleteRowsDialog = true; deleteTapCount = 0 }
+                            }) {
                                 Icon(
                                     Icons.Default.Delete,
                                     contentDescription = "Delete selected",
@@ -531,7 +561,14 @@ fun LibraryScreen(
                             }
                         },
                         actions = {
-                            IconButton(onClick = { showDeleteRasterLayersDialog = true }) {
+                            IconButton(onClick = {
+                                val now = System.currentTimeMillis()
+                                if (now - lastDeleteTapTime > 2500L) deleteTapCount = 0
+                                deleteTapCount++
+                                lastDeleteTapTime = now
+                                android.widget.Toast.makeText(context, "Tap 3 times in quick succession to delete", android.widget.Toast.LENGTH_SHORT).show()
+                                if (deleteTapCount >= 3) { showDeleteRasterLayersDialog = true; deleteTapCount = 0 }
+                            }) {
                                 Icon(
                                     Icons.Default.Delete,
                                     contentDescription = "Delete selected layers",
@@ -561,10 +598,20 @@ fun LibraryScreen(
                     },
                 )
             }
+            item(key = "map-layer-hillshade") {
+                MapLayerRow(
+                    label = "Hillshading",
+                    icon = Icons.Default.Terrain,
+                    isActive = hillshadeVisible,
+                    onTap = { viewModel.toggleHillshade() },
+                )
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+            }
             item(key = "map-layer-satellite") {
                 MapLayerRow(
                     label = "Satellite",
-                    isActive = mapStyle == com.mappingsolution.data.map.MapStyle.SATELLITE,
+                    icon = Icons.Default.SatelliteAlt,
+                    isActive = rasterLayers.none { it.isVisible } && mapStyle == com.mappingsolution.data.map.MapStyle.SATELLITE,
                     onTap = { viewModel.setMapStyle(com.mappingsolution.data.map.MapStyle.SATELLITE) },
                 )
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
@@ -572,16 +619,9 @@ fun LibraryScreen(
             item(key = "map-layer-vector") {
                 MapLayerRow(
                     label = "Vector",
-                    isActive = mapStyle == com.mappingsolution.data.map.MapStyle.TOPO_DARK,
+                    icon = Icons.Default.Route,
+                    isActive = rasterLayers.none { it.isVisible } && mapStyle == com.mappingsolution.data.map.MapStyle.TOPO_DARK,
                     onTap = { viewModel.setMapStyle(com.mappingsolution.data.map.MapStyle.TOPO_DARK) },
-                )
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-            }
-            item(key = "map-layer-hillshade") {
-                MapLayerRow(
-                    label = "Hillshading",
-                    isActive = hillshadeVisible,
-                    onTap = { viewModel.toggleHillshade() },
                 )
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
             }
@@ -665,8 +705,8 @@ fun LibraryScreen(
                             onTap = {
                                 when (selectionMode) {
                                     is LibrarySelectionMode.None ->
+                                        // imported groups are read-only (like Google/OSM); only collapsible groups expand
                                         if (isCollapsible) viewModel.toggleCollapse(group.id)
-                                        else onEditGroup(group.id)
                                     is LibrarySelectionMode.GroupSelection -> viewModel.toggleGroupSelection(group.id)
                                     else -> Unit
                                 }
@@ -716,10 +756,9 @@ fun LibraryScreen(
                                 selectionMode = selectionMode,
                                 indented = true,
                                 onTap = {
-                                    when (selectionMode) {
-                                        is LibrarySelectionMode.None -> onEditPoi(poi.id)
-                                        is LibrarySelectionMode.RowSelection -> viewModel.toggleRowSelection(poi.id)
-                                        else -> Unit
+                                    // Grouped POI rows are not directly tappable for editing
+                                    if (selectionMode is LibrarySelectionMode.RowSelection) {
+                                        viewModel.toggleRowSelection(poi.id)
                                     }
                                 },
                                 onLongPress = {
@@ -964,7 +1003,7 @@ fun LibraryScreen(
                 }
             }
         }
-    }
+    } // end Scaffold
 }
 
 // ── Section header ────────────────────────────────────────────────────────────
@@ -1037,7 +1076,16 @@ private fun RasterLayerRow(
         headlineContent = { Text(layer.name, style = MaterialTheme.typography.bodyLarge) },
         leadingContent = if (isSelected) {
             { Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
-        } else null,
+        } else {
+            {
+                Icon(
+                    Icons.Default.Layers,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+        },
         trailingContent = {
             IconButton(onClick = onToggleVisibility) {
                 Icon(
@@ -1045,6 +1093,7 @@ private fun RasterLayerRow(
                     contentDescription = if (layer.isVisible) "Hide layer" else "Show layer",
                     tint = if (layer.isVisible) MaterialTheme.colorScheme.primary
                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                    modifier = Modifier.size(26.dp),
                 )
             }
         },
@@ -1061,19 +1110,30 @@ private fun RasterLayerRow(
 @Composable
 private fun MapLayerRow(
     label: String,
+    icon: ImageVector,
     isActive: Boolean,
     onTap: () -> Unit,
 ) {
     ListItem(
-        modifier = Modifier.clickable(onClick = onTap),
         headlineContent = { Text(label, style = MaterialTheme.typography.bodyLarge) },
-        trailingContent = {
+        leadingContent = {
             Icon(
-                imageVector = if (isActive) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                contentDescription = if (isActive) "Visible" else "Hidden",
-                tint = if (isActive) MaterialTheme.colorScheme.primary
-                       else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(24.dp),
             )
+        },
+        trailingContent = {
+            IconButton(onClick = onTap) {
+                Icon(
+                    imageVector = if (isActive) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                    contentDescription = if (isActive) "Visible" else "Hidden",
+                    tint = if (isActive) MaterialTheme.colorScheme.primary
+                           else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                    modifier = Modifier.size(26.dp),
+                )
+            }
         },
     )
 }
@@ -1095,9 +1155,6 @@ private fun GroupHeaderRow(
     onEditTap: () -> Unit,
     onToggleVisibility: () -> Unit,
 ) {
-    val groupColor = parseHexColor(group.color)
-    val primaryColor = MaterialTheme.colorScheme.primary
-    val onPrimaryColor = MaterialTheme.colorScheme.onPrimary
     val containerColor = if (isSelected)
         MaterialTheme.colorScheme.primaryContainer
     else
@@ -1116,36 +1173,21 @@ private fun GroupHeaderRow(
         supportingContent = countText?.let {
             { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 1) }
         },
-        leadingContent = {
-            if (isSelected) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .drawBehind { drawCircle(primaryColor) },
-                ) {
+        leadingContent = when {
+            isSelected -> {
+                { Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
+            }
+            group.isImported -> {
+                {
                     Icon(
-                        Icons.Default.Check,
+                        imageVector = Icons.Default.Layers,
                         contentDescription = null,
-                        tint = onPrimaryColor,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-            } else {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .drawBehind { drawCircle(groupColor) },
-                ) {
-                    Icon(
-                        imageVector = IconCatalog.iconVector(group.iconKey),
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(22.dp),
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(24.dp),
                     )
                 }
             }
+            else -> null
         },
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1172,6 +1214,7 @@ private fun GroupHeaderRow(
                         contentDescription = if (group.isVisible) "Hide" else "Show",
                         tint = if (group.isVisible) MaterialTheme.colorScheme.primary
                                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                        modifier = Modifier.size(26.dp),
                     )
                 }
             }
@@ -1229,6 +1272,7 @@ private fun PoiRow(
                     contentDescription = if (poi.isVisible) "Hide" else "Show",
                     tint = if (poi.isVisible) MaterialTheme.colorScheme.primary
                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                    modifier = Modifier.size(26.dp),
                 )
             }
         },
@@ -1300,6 +1344,7 @@ private fun RouteRow(
                         contentDescription = if (route.isVisible) "Hide" else "Show",
                         tint = if (route.isVisible) MaterialTheme.colorScheme.primary
                                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                        modifier = Modifier.size(26.dp),
                     )
                 }
             }
@@ -1361,27 +1406,18 @@ private fun PlanRow(
 // ── Dialogs ───────────────────────────────────────────────────────────────────
 
 @Composable
-private fun DestructiveCooldownDialog(
+private fun SimpleDeleteDialog(
     title: String,
-    text: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var seconds by remember { mutableIntStateOf(5) }
-    LaunchedEffect(Unit) {
-        while (seconds > 0) { delay(1_000L); seconds-- }
-    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
-        text = { Text(text) },
+        text = { Text("Are you sure? This cannot be undone.") },
         confirmButton = {
-            TextButton(onClick = onConfirm, enabled = seconds == 0) {
-                Text(
-                    if (seconds > 0) "Delete ($seconds)" else "Delete",
-                    color = if (seconds == 0) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-                )
+            TextButton(onClick = onConfirm) {
+                Text("Delete", color = MaterialTheme.colorScheme.error)
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
@@ -1565,25 +1601,25 @@ private fun PlacesGroupRow(
     count: Int,
     onToggleVisibility: () -> Unit,
 ) {
-    val groupColor = parseHexColor(group.color)
-    val countText: String? = null
     ListItem(
-        headlineContent = { Text(group.name, style = MaterialTheme.typography.bodyLarge) },
-        supportingContent = countText?.let {
-            { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 1) }
+        headlineContent = {
+            val displayName = if (group.id == OSM_POI_GROUP_ID) "Open Street Map" else group.name
+            Text(displayName, style = MaterialTheme.typography.bodyLarge)
         },
         leadingContent = {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(40.dp)
-                    .drawBehind { drawCircle(groupColor) },
-            ) {
+            if (group.id == GOOGLE_PLACES_GROUP_ID) {
                 Icon(
-                    imageVector = IconCatalog.iconVector(group.iconKey),
+                    imageVector = Icons.Default.LocationOn,
                     contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(22.dp),
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(24.dp),
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Default.Public,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(24.dp),
                 )
             }
         },
@@ -1595,6 +1631,7 @@ private fun PlacesGroupRow(
                     contentDescription = if (group.isVisible) "Hide" else "Show",
                     tint = if (group.isVisible) MaterialTheme.colorScheme.primary
                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                    modifier = Modifier.size(26.dp),
                 )
             }
         },
