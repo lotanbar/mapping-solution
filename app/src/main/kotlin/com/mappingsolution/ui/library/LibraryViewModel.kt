@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
@@ -559,6 +560,7 @@ class LibraryViewModel @Inject constructor(
         val request = OneTimeWorkRequestBuilder<ImportWorker>()
             .setInputData(workDataOf(ImportWorker.KEY_FOLDER_PATH to path))
             .addTag("$TAG_FOLDER_PREFIX$folderName")
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .build()
         currentWorkId = request.id
         dismissedWorkId = null
@@ -575,6 +577,7 @@ class LibraryViewModel @Inject constructor(
         val request = OneTimeWorkRequestBuilder<ImportWorker>()
             .setInputData(workDataOf(ImportWorker.KEY_ZIP_PATH to filePath))
             .addTag("$TAG_FOLDER_PREFIX$fileName")
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .build()
         currentWorkId = request.id
         dismissedWorkId = null
@@ -591,6 +594,7 @@ class LibraryViewModel @Inject constructor(
         val request = OneTimeWorkRequestBuilder<ImportWorker>()
             .setInputData(workDataOf(ImportWorker.KEY_FILE_PATH to filePath))
             .addTag("$TAG_FOLDER_PREFIX$fileName")
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .build()
         currentWorkId = request.id
         dismissedWorkId = null

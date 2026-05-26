@@ -6,6 +6,11 @@ import android.app.NotificationManager
 import android.os.Build
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
+import coil.Coil
+import coil.ImageLoader
+import coil.decode.VideoFrameDecoder
+import okhttp3.Interceptor
+import com.mappingsolution.data.image.ZipImageFetcher
 import com.mappingsolution.data.map.MbTilesInterceptor
 import com.mappingsolution.data.migration.LegacyDbMigration
 import com.mappingsolution.data.util.StorageManager
@@ -36,6 +41,27 @@ class MappingApplication : Application(), Configuration.Provider {
 
         // MapLibre must be initialized before anything that touches its static context
         org.maplibre.android.MapLibre.getInstance(this)
+
+        // Configure Coil with a User-Agent so Wikimedia Commons doesn't 403 image downloads
+        Coil.setImageLoader(
+            ImageLoader.Builder(this)
+                .okHttpClient(
+                    OkHttpClient.Builder()
+                        .addInterceptor(Interceptor { chain ->
+                            chain.proceed(
+                                chain.request().newBuilder()
+                                    .header("User-Agent", "mapping-solution/1.0 (Android)")
+                                    .build()
+                            )
+                        })
+                        .build()
+                )
+                .components {
+                    add(VideoFrameDecoder.Factory())
+                    add(ZipImageFetcher.Factory())
+                }
+                .build()
+        )
 
         // Register custom OkHttp client so MapLibre serves local MBTiles tiles
         HttpRequestUtil.setOkHttpClient(

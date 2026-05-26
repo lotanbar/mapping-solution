@@ -14,7 +14,6 @@ import org.xmlpull.v1.XmlPullParserFactory
 import java.io.File
 import java.io.InputStream
 import java.util.zip.ZipFile
-import java.util.zip.ZipInputStream
 import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -239,73 +238,101 @@ class ImportRepository @Inject constructor(
     // ── ZIP import ────────────────────────────────────────────────────────────
 
     /**
-     * Imports a ZIP file that contains a GPX file and an optional `images/` folder.
-     * The ZIP is extracted to a temp directory, then processed with [importFolder].
+     * Imports a ZIP file containing a GPX file and an optional `images/` folder.
+     *
+     * Instead of extracting everything to disk, the GPX is parsed directly from the zip
+     * stream and the zip itself is copied to app-private storage. Images are served
+     * on demand from the stored zip via [ZipImageFetcher] — no per-image file copies.
      */
     suspend fun importZipFile(
         zipPath: String,
         onProgress: suspend (phase: String, done: Int, total: Int) -> Unit = { _, _, _ -> },
     ): ImportResult = withContext(Dispatchers.IO) {
-        val zipFile = File(zipPath)
-        if (!zipFile.isFile || zipFile.extension.lowercase() != "zip") {
-            return@withContext ImportResult(errors = listOf("Not a valid ZIP file: ${zipFile.name}"))
+        val sourceZipFile = File(zipPath)
+        if (!sourceZipFile.isFile || sourceZipFile.extension.lowercase() != "zip") {
+            return@withContext ImportResult(errors = listOf("Not a valid ZIP file: ${sourceZipFile.name}"))
         }
 
-        val tempDir = File(context.cacheDir, "zip_import_${System.currentTimeMillis()}")
-        try {
-            onProgress("Reading ZIP index…", 0, 0)
-            val totalEntries = ZipFile(zipFile).use { it.size() }
-            onProgress("Extracting ZIP…", 0, totalEntries)
-            extractZip(zipFile, tempDir) { done -> onProgress("Extracting ZIP…", done, totalEntries) }
-            importFolder(tempDir.absolutePath, onProgress)
-        } finally {
-            tempDir.deleteRecursively()
-        }
-    }
+        onProgress("Reading ZIP…", 0, 0)
 
-    private suspend fun extractZip(
-        zipFile: File,
-        destDir: File,
-        onEntry: suspend (done: Int) -> Unit = {},
-    ) {
-        destDir.mkdirs()
-        val destCanonical = destDir.canonicalPath
-        var extracted = 0
-        var lastEmit = 0L
-        ZipInputStream(zipFile.inputStream().buffered()).use { zis ->
-            var entry = zis.nextEntry
-            while (entry != null) {
-                val entryFile = File(destDir, entry.name)
-                // Guard against path-traversal attacks
-                if (!entryFile.canonicalPath.startsWith(destCanonical + File.separator) &&
-                    entryFile.canonicalPath != destCanonical) {
-                    zis.closeEntry()
-                    entry = zis.nextEntry
-                    continue
+        val allPois = mutableListOf<Poi>()
+        val allRoutes = mutableListOf<Pair<Route, List<RoutePoint>>>()
+        var groupName = sourceZipFile.nameWithoutExtension
+        val errors = mutableListOf<String>()
+
+        ZipFile(sourceZipFile).use { zf ->
+            // Find the GPX entry at the zip root (no subdirectory)
+            val gpxEntry = zf.entries().asSequence().firstOrNull { entry ->
+                !entry.isDirectory &&
+                    entry.name.endsWith(".gpx", ignoreCase = true) &&
+                    !entry.name.contains('/')
+            } ?: return@withContext ImportResult(errors = listOf("No GPX file found at zip root in: ${sourceZipFile.name}"))
+
+            groupName = gpxEntry.name.substringBeforeLast('.')
+
+            // Build a stem→filename index from images/ entries for filename resolution
+            val zipImageIndex = buildImageIndexFromZip(zf)
+
+            // Parse GPX directly from the zip stream — no temp file
+            var lastParseEmit = 0L
+            try {
+                zf.getInputStream(gpxEntry).use { stream ->
+                    parseGpx(stream, allPois, allRoutes) { count ->
+                        val now = System.currentTimeMillis()
+                        if (now - lastParseEmit >= 32) {
+                            lastParseEmit = now
+                            onProgress("Reading GPX… $count waypoints found", 0, 0)
+                        }
+                    }
                 }
-                if (entry.isDirectory) {
-                    entryFile.mkdirs()
-                } else {
-                    entryFile.parentFile?.mkdirs()
-                    entryFile.outputStream().use { zis.copyTo(it) }
-                }
-                zis.closeEntry()
-                extracted++
-                val now = System.currentTimeMillis()
-                if (now - lastEmit >= 32) {
-                    lastEmit = now
-                    onEntry(extracted)
-                }
-                entry = zis.nextEntry
+            } catch (e: Exception) {
+                errors.add("${gpxEntry.name}: ${e.message ?: "parse error"}")
+            }
+
+            // Resolve GPX image references against actual zip entry names; drop any that don't exist in the zip
+            val resolvedPois = allPois.map { poi ->
+                if (poi.mediaPaths.isEmpty()) poi
+                else poi.copy(mediaPaths = poi.mediaPaths.mapNotNull { filename ->
+                    resolveFilenameFromZipIndex(filename, zipImageIndex)
+                })
+            }
+
+            if (resolvedPois.isNotEmpty()) {
+                saveImport(
+                    groupName = groupName,
+                    resolvedPois = resolvedPois,
+                    imagesDir = null,
+                    imageIndex = emptyMap(),
+                    onProgress = onProgress,
+                    sourceZipFile = sourceZipFile,
+                )
             }
         }
+
+        if (allRoutes.isNotEmpty()) {
+            onProgress("Writing routes to storage…", 0, allRoutes.size)
+            for ((route, points) in allRoutes) {
+                val routeId = routeRepository.insert(route)
+                if (points.isNotEmpty()) routeRepository.appendPoints(routeId, points)
+            }
+        }
+
+        ImportResult(
+            poisImported = allPois.size,
+            routesImported = allRoutes.size,
+            filesProcessed = 1,
+            errors = errors,
+        )
     }
 
     // ── GPX parser ────────────────────────────────────────────────────────────
 
     /**
-     * Core save logic used by both [importFolder] and [importSingleFile].
+     * Core save logic used by [importFolder], [importSingleFile], and [importZipFile].
      * Detects re-import vs first import via [GroupFileRepository.prepareForReimport].
+     *
+     * When [sourceZipFile] is non-null the zip is copied to app-private storage and
+     * all image copy/sync steps are skipped — images are served on demand from the zip.
      */
     private suspend fun saveImport(
         groupName: String,
@@ -313,9 +340,10 @@ class ImportRepository @Inject constructor(
         imagesDir: File?,
         imageIndex: Map<String, File>,
         onProgress: suspend (phase: String, done: Int, total: Int) -> Unit,
+        sourceZipFile: File? = null,
     ) {
         val reimportInfo = groupRepository.prepareForReimport(groupName)
-        Log.i("ImportRepository", "saveImport: groupName='$groupName' reimport=${reimportInfo != null} pois=${resolvedPois.size}")
+        Log.i("ImportRepository", "saveImport: groupName='$groupName' reimport=${reimportInfo != null} pois=${resolvedPois.size} zipBacked=${sourceZipFile != null}")
 
         if (reimportInfo != null) {
             // ── SMART RE-IMPORT ──────────────────────────────────────────────
@@ -393,45 +421,51 @@ class ImportRepository @Inject constructor(
                 }
             }
 
-            // Delete removed POIs' image dirs
-            for (poi in removedPois) {
-                storageManager.getPoiMediaDir(poi.name, poi.id).deleteRecursively()
-            }
-
-            // Image sync: added POIs (copy all) + updated POIs with mediaPaths changes (sync by filename+size)
-            val toSync = ArrayList<Poi>(addedPoiIds.size + updatedWithImageChanges.size).also {
-                it.addAll(poisToWrite.filter { p -> p.id in addedPoiIds })
-                it.addAll(updatedWithImageChanges)
-            }
-            if (toSync.isEmpty()) {
-                Log.i("ImportRepository", "Images up to date — nothing to sync")
-                onProgress("Images up to date", 0, 0)
-            } else {
-                Log.i("ImportRepository", "Syncing images for ${toSync.size} POIs (${addedPoiIds.size} added, ${updatedWithImageChanges.size} updated)")
-                onProgress("Syncing images…", 0, toSync.size)
-                var syncCount = 0
-                for (poi in toSync) {
-                    if (imagesDir != null) {
-                        val destDir = storageManager.getPoiMediaDir(poi.name, poi.id)
-                        if (poi.id in addedPoiIds) {
-                            destDir.mkdirs()
-                            for (filename in poi.mediaPaths) {
-                                val srcFile = File(imagesDir, filename).takeIf { it.isFile }
-                                    ?: resolveImageFile(imagesDir, filename, imageIndex)
-                                    ?: continue
-                                runCatching { srcFile.copyTo(File(destDir, srcFile.name), overwrite = true) }
-                                    .onFailure { Log.w("ImportRepository", "Failed to copy '${srcFile.name}': ${it.message}") }
-                            }
-                        } else {
-                            syncPoiImages(imagesDir, destDir, poi.mediaPaths, imageIndex)
-                        }
-                    }
-                    syncCount++
-                    onProgress("Syncing images…", syncCount, toSync.size)
+            // Delete removed POIs' image dirs (only for file-backed groups)
+            if (sourceZipFile == null) {
+                for (poi in removedPois) {
+                    storageManager.getPoiMediaDir(poi.name, poi.id).deleteRecursively()
                 }
             }
 
-            groupRepository.markImportComplete(groupId, total)
+            // Image sync: added POIs (copy all) + updated POIs with mediaPaths changes (sync by filename+size)
+            // Skipped entirely for zip-backed groups — images are served on demand from the zip.
+            if (sourceZipFile == null) {
+                val toSync = ArrayList<Poi>(addedPoiIds.size + updatedWithImageChanges.size).also {
+                    it.addAll(poisToWrite.filter { p -> p.id in addedPoiIds })
+                    it.addAll(updatedWithImageChanges)
+                }
+                if (toSync.isEmpty()) {
+                    Log.i("ImportRepository", "Images up to date — nothing to sync")
+                    onProgress("Images up to date", 0, 0)
+                } else {
+                    Log.i("ImportRepository", "Syncing images for ${toSync.size} POIs (${addedPoiIds.size} added, ${updatedWithImageChanges.size} updated)")
+                    onProgress("Syncing images…", 0, toSync.size)
+                    var syncCount = 0
+                    for (poi in toSync) {
+                        if (imagesDir != null) {
+                            val destDir = storageManager.getPoiMediaDir(poi.name, poi.id)
+                            if (poi.id in addedPoiIds) {
+                                destDir.mkdirs()
+                                for (filename in poi.mediaPaths) {
+                                    val srcFile = File(imagesDir, filename).takeIf { it.isFile }
+                                        ?: resolveImageFile(imagesDir, filename, imageIndex)
+                                        ?: continue
+                                    runCatching { srcFile.copyTo(File(destDir, srcFile.name), overwrite = true) }
+                                        .onFailure { Log.w("ImportRepository", "Failed to copy '${srcFile.name}': ${it.message}") }
+                                }
+                            } else {
+                                syncPoiImages(imagesDir, destDir, poi.mediaPaths, imageIndex)
+                            }
+                        }
+                        syncCount++
+                        onProgress("Syncing images…", syncCount, toSync.size)
+                    }
+                }
+            }
+
+            val appZipPath = sourceZipFile?.let { copyZipToStorage(it, storedName, groupId) }
+            groupRepository.markImportComplete(groupId, total, appZipPath)
 
         } else {
             // ── FIRST IMPORT ────────────────────────────────────────────────
@@ -457,7 +491,9 @@ class ImportRepository @Inject constructor(
                 }
             }
 
-            if (imagesDir != null) {
+            // Copy images per-POI only for file-backed imports.
+            // Zip-backed imports serve images on demand — no file copies needed.
+            if (sourceZipFile == null && imagesDir != null) {
                 val poisWithImages = resolvedPois.filter { it.mediaPaths.isNotEmpty() }
                 Log.i("ImportRepository", "Copying images for ${poisWithImages.size} POIs")
                 onProgress("Copying images…", 0, poisWithImages.size)
@@ -477,8 +513,21 @@ class ImportRepository @Inject constructor(
                 }
             }
 
-            groupRepository.markImportComplete(groupId, total)
+            val appZipPath = sourceZipFile?.let { copyZipToStorage(it, groupName, groupId) }
+            groupRepository.markImportComplete(groupId, total, appZipPath)
         }
+    }
+
+    /** Copies [sourceZip] to app-private storage so the path is stable regardless of where the user placed it. */
+    private fun copyZipToStorage(
+        sourceZip: File,
+        groupName: String,
+        groupId: String,
+    ): String {
+        val destZip = storageManager.getImportZipFile(groupName.trim(), groupId)
+        Log.i("ImportRepository", "Copying zip to app storage: ${sourceZip.absolutePath} → ${destZip.absolutePath}")
+        sourceZip.copyTo(destZip, overwrite = true)
+        return destZip.absolutePath
     }
 
     /**
@@ -585,13 +634,9 @@ class ImportRepository @Inject constructor(
                                     lat = wptLat, lng = wptLon,
                                     elevation = wptEle,
                                     mediaPaths = wptImages.toList(),
-                                    iconKey = if (wptType.isNotBlank()) {
-                                        com.mappingsolution.data.places.PoiIconResolver
-                                            .resolveForImportedType(wptType).takeIf { it != "place" }
-                                    } else {
-                                        com.mappingsolution.data.places.PoiIconResolver
-                                            .resolveForImportedName(wptName, wptDesc ?: "").takeIf { it != "place" }
-                                    },
+                                    iconKey = com.mappingsolution.data.places.PoiIconResolver
+                                        .resolveForImported(wptType, wptName, wptDesc ?: "")
+                                        .takeIf { it != "place" },
                                     createdAt = wptTime ?: System.currentTimeMillis(),
                                     updatedAt = System.currentTimeMillis(),
                                 )
@@ -643,6 +688,34 @@ class ImportRepository @Inject constructor(
     private fun resolveImageFile(imagesDir: File, filename: String, index: Map<String, File>): File? {
         val exact = File(imagesDir, filename)
         if (exact.isFile) return exact
+        val stem = filename.substringBeforeLast('.').lowercase()
+        return index[stem]
+    }
+
+    /**
+     * Builds a case-insensitive map from stem → actual filename for all entries under `images/`
+     * in [zf]. Mirrors the `_x_200` fallback logic of [buildImageIndex] so that a GPX reference
+     * like "photo.jpg" resolves to "photo_x_200.avif" when that is the zip entry.
+     */
+    private fun buildImageIndexFromZip(zf: java.util.zip.ZipFile): Map<String, String> {
+        val index = mutableMapOf<String, String>()
+        zf.entries().asSequence().forEach { entry ->
+            if (entry.isDirectory) return@forEach
+            val name = entry.name
+            if (!name.startsWith("images/")) return@forEach
+            val filename = name.removePrefix("images/")
+            if (filename.isEmpty() || filename.contains('/')) return@forEach
+            val stem = filename.substringBeforeLast('.').lowercase()
+            index.putIfAbsent(stem, filename)
+            if (stem.endsWith("_x_200")) {
+                index.putIfAbsent(stem.removeSuffix("_x_200"), filename)
+            }
+        }
+        return index
+    }
+
+    /** Resolves a GPX image reference to the actual filename stored in the zip's `images/` dir. */
+    private fun resolveFilenameFromZipIndex(filename: String, index: Map<String, String>): String? {
         val stem = filename.substringBeforeLast('.').lowercase()
         return index[stem]
     }

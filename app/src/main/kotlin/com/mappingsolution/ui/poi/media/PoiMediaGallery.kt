@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import android.net.Uri
 import coil.compose.AsyncImage
 import coil.decode.VideoFrameDecoder
 import coil.request.ImageRequest
@@ -85,7 +86,7 @@ fun PoiMediaGallery(
                 } else {
                     AsyncImage(
                         model = ImageRequest.Builder(context)
-                            .data(if (item.path.startsWith("http")) item.path else File(item.path))
+                            .data(if (item.path.startsWith("http") || item.path.startsWith("zip://")) Uri.parse(item.path) else File(item.path))
                             .decoderFactory(VideoFrameDecoder.Factory())
                             .crossfade(true)
                             .build(),

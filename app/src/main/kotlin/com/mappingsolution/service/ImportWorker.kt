@@ -21,6 +21,8 @@ class ImportWorker @AssistedInject constructor(
     private val importRepository: ImportRepository,
 ) : CoroutineWorker(context, params) {
 
+    override suspend fun getForegroundInfo(): ForegroundInfo = buildForegroundInfo("Starting…")
+
     override suspend fun doWork(): Result {
         val folderPath = inputData.getString(KEY_FOLDER_PATH)
         val filePath = inputData.getString(KEY_FILE_PATH)

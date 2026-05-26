@@ -34,6 +34,7 @@ class PlacesApiService @Inject constructor(private val httpClient: OkHttpClient)
             Log.w("PlacesApiService", "GOOGLE_PLACES_API_KEY is not set; skipping fetch")
             return emptyList()
         }
+        Log.d("PlacesApiService", "fetchNearby: key=${apiKey.take(8)}… lat=$lat lng=$lng radius=$radiusMeters max=$maxCount")
         val effectiveMax = maxCount
         val body = JSONObject().apply {
             put("includedTypes", org.json.JSONArray(GOOGLE_PLACES_INCLUDED_TYPES))
@@ -48,6 +49,7 @@ class PlacesApiService @Inject constructor(private val httpClient: OkHttpClient)
                 })
             })
         }.toString()
+        Log.d("PlacesApiService", "fetchNearby request body: $body")
 
         val request = Request.Builder()
             .url(baseUrl)
@@ -58,12 +60,14 @@ class PlacesApiService @Inject constructor(private val httpClient: OkHttpClient)
 
         return runCatching {
             httpClient.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string() ?: ""
+                Log.d("PlacesApiService", "fetchNearby response: HTTP ${response.code}, body=$responseBody")
                 if (response.code == 429) throw QuotaExceededException("Google Places daily quota exhausted")
                 if (!response.isSuccessful) {
-                    Log.e("PlacesApiService", "HTTP ${response.code}: ${response.body?.string()}")
+                    Log.e("PlacesApiService", "fetchNearby HTTP ${response.code}: $responseBody")
                     return@runCatching emptyList()
                 }
-                val json = JSONObject(response.body!!.string())
+                val json = JSONObject(responseBody)
                 val placesArray = json.optJSONArray("places") ?: return@runCatching emptyList()
                 val now = System.currentTimeMillis()
                 (0 until placesArray.length()).mapNotNull { i ->
@@ -168,6 +172,47 @@ class PlacesApiService @Inject constructor(private val httpClient: OkHttpClient)
         }.getOrElse { e ->
             Log.e("PlacesApiService", "searchText failed", e)
             emptyList()
+        }
+    }
+
+    /**
+     * Fetches photo URLs and contact info for a specific place in a single API call.
+     */
+    suspend fun fetchPlaceDetail(placeId: String): PlaceDetail {
+        val apiKey = BuildConfig.GOOGLE_PLACES_API_KEY
+        if (apiKey.isBlank()) return PlaceDetail()
+
+        val request = Request.Builder()
+            .url("$detailBaseUrl/$placeId")
+            .addHeader("X-Goog-Api-Key", apiKey)
+            .addHeader("X-Goog-FieldMask", "photos,websiteUri,nationalPhoneNumber")
+            .get()
+            .build()
+
+        return runCatching {
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.e("PlacesApiService", "fetchPlaceDetail HTTP ${response.code}")
+                    return@runCatching PlaceDetail()
+                }
+                val json = JSONObject(response.body!!.string())
+                val photos = json.optJSONArray("photos")
+                val photoUrls = if (photos != null) {
+                    (0 until photos.length()).mapNotNull { i ->
+                        runCatching {
+                            val photoName = photos.getJSONObject(i).getString("name")
+                            "$v1BaseUrl/$photoName/media?maxWidthPx=800&key=$apiKey"
+                        }.getOrNull()
+                    }
+                } else emptyList()
+                val website = json.optString("websiteUri").ifEmpty { null }
+                val phone = json.optString("nationalPhoneNumber").ifEmpty { null }
+                val contact = if (website != null || phone != null) PlaceContactInfo(website, phone) else null
+                PlaceDetail(photoUrls = photoUrls, contact = contact)
+            }
+        }.getOrElse { e ->
+            Log.e("PlacesApiService", "fetchPlaceDetail failed", e)
+            PlaceDetail()
         }
     }
 

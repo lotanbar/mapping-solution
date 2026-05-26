@@ -28,6 +28,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.gson.JsonObject
 import com.mappingsolution.BuildConfig
 import com.mappingsolution.createCircleIcon
+import com.mappingsolution.createHexagonIcon
 import com.mappingsolution.createPinBitmap
 import com.mappingsolution.createSquareIcon
 import com.mappingsolution.data.map.MapStyle
@@ -167,6 +168,44 @@ private fun createPoiSquare(
     val composeCanvas = androidx.compose.ui.graphics.Canvas(androidCanvas)
     val drawScope = CanvasDrawScope()
     val iconSize = size * 0.55f
+    val offset = (size - iconSize) / 2f
+
+    drawScope.draw(density, layoutDirection, composeCanvas, Size(size.toFloat(), size.toFloat())) {
+        withTransform({ translate(offset, offset) }) {
+            with(painter) {
+                draw(
+                    size = Size(iconSize, iconSize),
+                    colorFilter = ColorFilter.tint(Color.White),
+                )
+            }
+        }
+    }
+    return bitmap
+}
+
+private fun createPoiHexagon(
+    iconKey: String,
+    painter: Painter,
+    density: Density,
+    layoutDirection: LayoutDirection,
+    size: Int = 80,
+): Bitmap {
+    val bitmap = createHexagonIcon(iconKey, size = size)
+    val androidCanvas = android.graphics.Canvas(bitmap)
+
+    if (iconKey == "place") {
+        val dotPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            style = android.graphics.Paint.Style.FILL
+        }
+        val cx = size / 2f
+        androidCanvas.drawCircle(cx, cx, size * 0.20f, dotPaint)
+        return bitmap
+    }
+
+    val composeCanvas = androidx.compose.ui.graphics.Canvas(androidCanvas)
+    val drawScope = CanvasDrawScope()
+    val iconSize = size * 0.50f
     val offset = (size - iconSize) / 2f
 
     drawScope.draw(density, layoutDirection, composeCanvas, Size(size.toFloat(), size.toFloat())) {
@@ -350,7 +389,7 @@ fun MapComponent(
         allIconKeys.forEach { key ->
             val painter = allPainters[key] ?: placePainterFallback
             style.addImage("pin-google-$key", createPoiCircle(key, painter, density, layoutDirection))
-            style.addImage("pin-osm-$key", createPoiCircle(key, painter, density, layoutDirection))
+            style.addImage("pin-osm-$key", createPoiHexagon(key, painter, density, layoutDirection))
         }
     }
 
@@ -545,12 +584,29 @@ fun MapComponent(
     }
 
     LaunchedEffect(googlePlaces, styleReady.value) {
-        val map = mapState.value ?: return@LaunchedEffect
-        if (!styleReady.value) return@LaunchedEffect
-        val style = map.style ?: return@LaunchedEffect
-        val source = style.getSource("google-places-source") as? GeoJsonSource ?: return@LaunchedEffect
+        android.util.Log.d("MapComponent", "googlePlaces LaunchedEffect fired: ${googlePlaces.size} pois, styleReady=${styleReady.value}")
+        val map = mapState.value
+        if (map == null) {
+            android.util.Log.w("MapComponent", "googlePlaces: mapState is null, skipping")
+            return@LaunchedEffect
+        }
+        if (!styleReady.value) {
+            android.util.Log.w("MapComponent", "googlePlaces: style not ready, skipping")
+            return@LaunchedEffect
+        }
+        val style = map.style
+        if (style == null) {
+            android.util.Log.w("MapComponent", "googlePlaces: map.style is null, skipping")
+            return@LaunchedEffect
+        }
+        val source = style.getSource("google-places-source") as? GeoJsonSource
+        if (source == null) {
+            android.util.Log.e("MapComponent", "googlePlaces: 'google-places-source' not found in style!")
+            return@LaunchedEffect
+        }
         val features = googlePlaces.map { poi ->
             val iconId = "pin-google-${poi.iconKey ?: "place"}"
+            android.util.Log.d("MapComponent", "  googlePoi: ${poi.name} iconId=$iconId lat=${poi.lat} lng=${poi.lng}")
             Feature.fromGeometry(
                 Point.fromLngLat(poi.lng, poi.lat),
                 null,
@@ -561,6 +617,15 @@ fun MapComponent(
             }
         }
         source.setGeoJson(FeatureCollection.fromFeatures(features))
+        android.util.Log.d("MapComponent", "googlePlaces: setGeoJson done with ${features.size} features")
+        // Verify image and layer presence
+        val layer = style.getLayer("google-places-symbols")
+        android.util.Log.d("MapComponent", "googlePlaces: layer found=${layer != null}")
+        val firstIconId = features.firstOrNull()?.getStringProperty("icon-id")
+        if (firstIconId != null) {
+            val img = style.getImage(firstIconId)
+            android.util.Log.d("MapComponent", "googlePlaces: image '$firstIconId' in style=${img != null} (${img?.width}x${img?.height})")
+        }
     }
 
     LaunchedEffect(osmPois, styleReady.value) {
@@ -867,8 +932,8 @@ private fun setupMapStyle(
             PropertyFactory.iconAllowOverlap(true),
             PropertyFactory.iconIgnorePlacement(true),
             PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
-            PropertyFactory.iconOpacity(0.9f),
-            PropertyFactory.iconSize(0.8f),
+            PropertyFactory.iconOpacity(1f),
+            PropertyFactory.iconSize(0.988f),
         )
     )
     style.addLayer(
@@ -877,7 +942,8 @@ private fun setupMapStyle(
             PropertyFactory.iconAllowOverlap(true),
             PropertyFactory.iconIgnorePlacement(true),
             PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
-            PropertyFactory.iconOpacity(0.9f),
+            PropertyFactory.iconOpacity(1f),
+            PropertyFactory.iconSize(1.074f),
         )
     )
     style.addLayer(
@@ -886,7 +952,8 @@ private fun setupMapStyle(
             PropertyFactory.iconAllowOverlap(true),
             PropertyFactory.iconIgnorePlacement(true),
             PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
-            PropertyFactory.iconOpacity(0.9f),
+            PropertyFactory.iconOpacity(1f),
+            PropertyFactory.iconSize(1.074f),
         )
     )
     style.addLayer(
@@ -895,7 +962,8 @@ private fun setupMapStyle(
             PropertyFactory.iconAllowOverlap(true),
             PropertyFactory.iconIgnorePlacement(true),
             PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
-            PropertyFactory.iconOpacity(0.9f),
+            PropertyFactory.iconOpacity(1f),
+            PropertyFactory.iconSize(1.131f),
         )
     )
     style.addLayer(
@@ -905,6 +973,7 @@ private fun setupMapStyle(
             PropertyFactory.iconIgnorePlacement(true),
             PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
             PropertyFactory.iconOpacity(1f),
+            PropertyFactory.iconSize(1.131f),
         )
     )
 

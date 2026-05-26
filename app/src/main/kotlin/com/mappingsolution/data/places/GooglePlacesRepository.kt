@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.ceil
@@ -34,6 +35,8 @@ class GooglePlacesRepository @Inject constructor(
     @Volatile private var lastFetchedBounds: FetchedBounds? = null
     @Volatile private var lastFetchedZoom: Double? = null
 
+    private val detailCache = ConcurrentHashMap<String, PlaceDetail>()
+
     fun getById(id: String): Poi? = _pois.value.find { it.id == id }
 
     /** Merges POIs returned from a text search so the detail screen can look them up by ID. */
@@ -43,12 +46,16 @@ class GooglePlacesRepository @Inject constructor(
         pois.forEach { existing.putIfAbsent(it.id, it) }
         _pois.value = existing.values.toList()
     }
-    suspend fun fetchPhotoUrls(placeId: String): List<String> =
-        withContext(Dispatchers.IO) { api.fetchPlacePhotoUrls(placeId) }
 
-    /** Fetches website and phone for a known Google Place ID. */
-    suspend fun fetchContactInfo(placeId: String): PlaceContactInfo? =
-        withContext(Dispatchers.IO) { api.fetchPlaceContactInfo(placeId) }
+    /**
+     * Fetches photo URLs and contact info for a place in a single API call, cached in memory.
+     */
+    suspend fun fetchPlaceDetail(placeId: String): PlaceDetail = withContext(Dispatchers.IO) {
+        detailCache[placeId]?.let { return@withContext it }
+        val detail = api.fetchPlaceDetail(placeId)
+        detailCache[placeId] = detail
+        detail
+    }
 
     /**
      * Searches for a Google Place matching [name] near [lat]/[lng] (100 m radius),
@@ -82,6 +89,7 @@ class GooglePlacesRepository @Inject constructor(
         west: Double,
         zoom: Double,
     ) = withContext(Dispatchers.IO) {
+        Log.d("GooglePlacesRepo", "refreshForViewport: zoom=$zoom N=$north S=$south E=$east W=$west")
         // Circuit breaker: stop all calls while quota is exhausted.
         if (System.currentTimeMillis() < quotaExhaustedUntil) {
             Log.w("GooglePlacesRepo", "Quota exhausted — skipping fetch until reset")
@@ -118,6 +126,7 @@ class GooglePlacesRepository @Inject constructor(
 
             // Compute only the sub-regions not yet seen in this session.
             val strips = computeNewStrips(currentBounds, prevBounds)
+            Log.d("GooglePlacesRepo", "strips to fetch: ${strips.size} (prevBounds=$prevBounds)")
             if (strips.isEmpty()) {
                 _pois.value = mergeWithExisting(cachedInView, south, north, east, west)
                 lastFetchedBounds = currentBounds
@@ -130,6 +139,7 @@ class GooglePlacesRepository @Inject constructor(
             val quota = maxOf(0, GOOGLE_PLACES_MAX_RESULTS - existingInViewport.size)
             val maxPerStrip = minOf(20, ceil(quota.toDouble() / strips.size).toInt())
 
+            Log.d("GooglePlacesRepo", "quota=$quota maxPerStrip=$maxPerStrip existingInViewport=${existingInViewport.size}")
             val allStripPois = mutableListOf<Poi>()
             if (maxPerStrip > 0) {
                 for (strip in strips) {
@@ -143,6 +153,7 @@ class GooglePlacesRepository @Inject constructor(
                     )
                     try {
                         val cappedRadius = radiusMeters.coerceAtMost(50_000.0)
+                        Log.d("GooglePlacesRepo", "fetching strip center=(${stripCenterLat},${stripCenterLng}) radius=$cappedRadius")
                         allStripPois += api.fetchNearby(stripCenterLat, stripCenterLng, cappedRadius, maxPerStrip)
                     } catch (e: QuotaExceededException) {
                         Log.w("GooglePlacesRepo", "Quota exhausted — activating circuit breaker for 24 h")
@@ -162,6 +173,7 @@ class GooglePlacesRepository @Inject constructor(
                 allStripPois.associateBy { it.id }
             ).values.toList()
 
+            Log.d("GooglePlacesRepo", "fetch complete: ${allStripPois.size} new POIs, combined=${combined.size}, inViewport=${combined.count { it.lat in south..north && it.lng in west..east }}")
             cache.store(cacheKey, combined)
             _pois.value = mergeWithExisting(
                 combined.filter { it.lat in south..north && it.lng in west..east },

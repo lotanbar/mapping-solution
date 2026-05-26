@@ -48,14 +48,23 @@ class StorageManager @Inject constructor(
     fun getPoiMediaDir(name: String, id: String): File =
         File(mediaRootDir, "pois/${poiFolderName(name, id)}").also { it.mkdirs() }
 
+    /**
+     * Stable app-private location for a zip whose images back an imported bulk group.
+     * The zip is copied here during import so its path is guaranteed to remain valid.
+     */
+    fun getImportZipFile(groupName: String, groupId: String): File =
+        File(mediaRootDir, "import_zips/${sanitizeName(groupName)}_${groupId.take(8)}.zip")
+            .also { it.parentFile?.mkdirs() }
+
     // ── Bulk imported POIs — one folder per group ─────────────────────────
     /** The JSONL file holding all POIs for a bulk-imported group (one JSON object per line). */
     fun getBulkPoisFile(name: String, id: String): File = File(getPoiDir(name, id), "bulk_pois.jsonl")
 
     fun deletePoiFolder(name: String, id: String): Boolean {
         File(getPoisDir(), poiFolderName(name, id)).deleteRecursively()
-        // Also remove the media dir in private storage
+        // Also remove the media dir and any zip in private storage
         File(mediaRootDir, "pois/${poiFolderName(name, id)}").deleteRecursively()
+        File(mediaRootDir, "import_zips/${sanitizeName(name)}_${id.take(8)}.zip").delete()
         return true
     }
     fun renamePoiFolder(oldName: String, newName: String, id: String) {

@@ -50,6 +50,7 @@ import com.mappingsolution.data.places.GOOGLE_PLACES_GROUP_ID
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.ui.common.IconCatalog
 import java.io.File
+import android.net.Uri
 import kotlin.random.Random
 
 /**
@@ -135,13 +136,15 @@ fun PoiMediaPager(
                     else -> {
                         AsyncImage(
                             model = ImageRequest.Builder(context)
-                                .data(if (item.path.startsWith("http")) item.path else File(item.path))
+                                .data(if (item.path.startsWith("http") || item.path.startsWith("zip://")) Uri.parse(item.path) else File(item.path))
                                 .decoderFactory(VideoFrameDecoder.Factory())
                                 .crossfade(true)
                                 .build(),
                             contentDescription = null,
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Fit,
+                            error = androidx.compose.ui.graphics.painter.ColorPainter(Color.Transparent),
+                            onError = { android.util.Log.e("PoiMediaPager", "Image load failed: ${item.path} — ${it.result.throwable}") },
                         )
                         if (item.type == MediaType.VIDEO) {
                             Icon(

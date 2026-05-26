@@ -148,6 +148,7 @@ class PoiFormViewModel @Inject constructor(
     fun save(onSuccess: () -> Unit) {
         val s = _state.value
         if (s.name.isBlank()) {
+            logger.w(LOG_TAG, "save: aborted — name is blank")
             _state.update { it.copy(nameError = "Name is required") }
             return
         }

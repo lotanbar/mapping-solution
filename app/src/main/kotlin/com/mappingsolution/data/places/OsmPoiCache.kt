@@ -42,7 +42,7 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
         if (!file.exists()) return null
         return runCatching {
             val json = JSONObject(file.readText())
-            if (json.optInt("version", 1) < 2) return null  // stale format without iconKey
+            if (json.optInt("version", 1) < 3) return null  // stale format without wikiRef
             val fetchedAt = json.getLong("fetchedAt")
             if (System.currentTimeMillis() - fetchedAt > OSM_CACHE_TTL_MS) return null
             val south = json.optDouble("south", Double.MAX_VALUE)
@@ -66,7 +66,7 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
             val arr = JSONArray()
             pois.forEach { arr.put(poiToJson(it)) }
             val json = JSONObject().apply {
-                put("version", 2)
+                put("version", 3)
                 put("fetchedAt", System.currentTimeMillis())
                 put("south", south)
                 put("west", west)
@@ -87,7 +87,7 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
                     val json = JSONObject(file.readText())
                     val fetchedAt = json.getLong("fetchedAt")
                     val version = json.optInt("version", 1)
-                    if (now - fetchedAt > OSM_CACHE_TTL_MS || version < 2) file.delete()
+                    if (now - fetchedAt > OSM_CACHE_TTL_MS || version < 3) file.delete()
                 }
             }
     }
@@ -98,6 +98,7 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
         put("lat", poi.lat)
         put("lng", poi.lng)
         poi.iconKey?.let { put("iconKey", it) }
+        poi.wikiRef?.let { put("wikiRef", it) }
     }
 
     private fun poisFromJson(obj: JSONObject, fetchedAt: Long) = Poi(
@@ -107,6 +108,7 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
         lat = obj.getDouble("lat"),
         lng = obj.getDouble("lng"),
         iconKey = obj.optString("iconKey").ifBlank { null },
+        wikiRef = obj.optString("wikiRef").ifBlank { null },
         createdAt = fetchedAt,
         updatedAt = fetchedAt,
     )

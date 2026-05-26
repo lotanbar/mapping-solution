@@ -15,4 +15,6 @@ data class Poi(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val iconKey: String? = null,
+    /** Raw image reference extracted from OSM tags (direct URL, File:Name.jpg, or lang:Article). */
+    val wikiRef: String? = null,
 )

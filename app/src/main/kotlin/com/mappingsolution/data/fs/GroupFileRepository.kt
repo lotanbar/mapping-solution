@@ -193,9 +193,18 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
         group.id
     }
 
-    suspend fun markImportComplete(groupId: String, bulkPoiCount: Int = 0) = withContext(Dispatchers.IO) {
+    suspend fun markImportComplete(
+        groupId: String,
+        bulkPoiCount: Int = 0,
+        sourceZipPath: String? = null,
+    ) = withContext(Dispatchers.IO) {
         val group = _groups.value.find { it.id == groupId } ?: return@withContext
-        val updated = group.copy(importComplete = true, bulkPoiCount = bulkPoiCount, updatedAt = System.currentTimeMillis())
+        val updated = group.copy(
+            importComplete = true,
+            bulkPoiCount = bulkPoiCount,
+            sourceZipPath = sourceZipPath,
+            updatedAt = System.currentTimeMillis(),
+        )
         writeGroup(updated)
         setGroups(_groups.value.map { if (it.id == groupId) updated else it })
     }
@@ -308,6 +317,7 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
             put("type", group.type.name)
             put("createdAt", group.createdAt)
             put("updatedAt", group.updatedAt)
+            group.sourceZipPath?.let { put("sourceZipPath", it) }
         }
         storageManager.getGroupFile(group.name).writeText(json.toString())
     }
@@ -330,6 +340,7 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
             type = runCatching { GroupType.valueOf(json.optString("type", "POI")) }.getOrDefault(GroupType.POI),
             createdAt = json.getLong("createdAt"),
             updatedAt = json.getLong("updatedAt"),
+            sourceZipPath = json.optString("sourceZipPath").takeIf { it.isNotEmpty() },
         )
     } catch (_: Exception) { null }
 }

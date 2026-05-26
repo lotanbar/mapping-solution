@@ -19,6 +19,11 @@ data class Group(
     val isBulk: Boolean = false,
     /** Number of POIs in a bulk group (stored in the group file to avoid scanning the jsonl). */
     val bulkPoiCount: Int = 0,
+    /**
+     * Absolute path to the zip file whose `images/` entries back this group's media.
+     * Non-null means images are served on demand from the zip rather than copied to per-POI dirs.
+     */
+    val sourceZipPath: String? = null,
     val type: GroupType = GroupType.POI,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),

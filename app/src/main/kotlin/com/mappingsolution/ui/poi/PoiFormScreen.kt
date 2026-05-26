@@ -1,34 +1,24 @@
 package com.mappingsolution.ui.poi
 
 import android.Manifest
-import android.app.Activity
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AttachFile
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PhotoCamera
-import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -81,11 +71,6 @@ fun PoiFormScreen(
     val state by viewModel.state.collectAsState()
     val groups by viewModel.groups.collectAsState()
 
-    // File picker
-    val mediaLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetMultipleContents()
-    ) { uris -> viewModel.addMediaUris(uris) }
-
     // Photo capture
     var pendingPhotoUri by remember { mutableStateOf<Uri?>(null) }
     val photoLauncher = rememberLauncherForActivityResult(
@@ -97,15 +82,6 @@ fun PoiFormScreen(
     val videoLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CaptureVideo()
     ) { success -> if (success) pendingVideoUri?.let { viewModel.addMediaUris(listOf(it)) } }
-
-    // Audio recording
-    val audioLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            result.data?.data?.let { uri -> viewModel.addMediaUris(listOf(uri)) }
-        }
-    }
 
     // Camera runtime permission
     var pendingCameraAction by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -202,12 +178,6 @@ fun PoiFormScreen(
                     
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
-                            onClick = { mediaLauncher.launch("*/*") },
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(Icons.Default.AttachFile, contentDescription = null, modifier = Modifier.size(20.dp))
-                        }
-                        OutlinedButton(
                             onClick = {
                                 launchWithCamera {
                                     val file = File(context.filesDir, "poi_photo_${System.currentTimeMillis()}.jpg")
@@ -216,9 +186,9 @@ fun PoiFormScreen(
                                     photoLauncher.launch(uri)
                                 }
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).height(64.dp),
                         ) {
-                            Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(32.dp))
                         }
                         OutlinedButton(
                             onClick = {
@@ -229,15 +199,9 @@ fun PoiFormScreen(
                                     videoLauncher.launch(uri)
                                 }
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).height(64.dp),
                         ) {
-                            Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(20.dp))
-                        }
-                        OutlinedButton(
-                            onClick = { audioLauncher.launch(Intent(MediaStore.Audio.Media.RECORD_SOUND_ACTION)) },
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(32.dp))
                         }
                     }
 
@@ -269,37 +233,6 @@ fun PoiFormScreen(
                     isSaving = state.isSaving,
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
-        }
-    }
-}
-
-@Composable
-private fun MediaAttachmentRow(path: String, onRemove: () -> Unit) {
-    val isVideo = com.mappingsolution.data.model.MediaUtils.isVideo(path)
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-    ) {
-        Icon(
-            imageVector = if (isVideo) Icons.Default.VideoFile else Icons.Default.Image,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(24.dp),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = File(path).name,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-        )
-        IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
-            Icon(
-                imageVector = Icons.Default.Close,
-                contentDescription = "Remove",
-                tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(18.dp),
-            )
         }
     }
 }

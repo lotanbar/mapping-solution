@@ -21,6 +21,7 @@ import com.mappingsolution.data.model.MediaItem
 import com.mappingsolution.data.model.MediaType
 import com.mappingsolution.data.model.MediaUtils
 import java.io.File
+import android.net.Uri
 
 @Composable
 fun MediaPreviewScreen(
@@ -57,7 +58,7 @@ fun MediaPreviewScreen(
 fun ZoomableImage(path: String) {
     Box(modifier = Modifier.fillMaxSize()) {
         AsyncImage(
-            model = if (path.startsWith("http")) path else File(path),
+            model = if (path.startsWith("http") || path.startsWith("zip://")) Uri.parse(path) else File(path),
             contentDescription = null,
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Fit

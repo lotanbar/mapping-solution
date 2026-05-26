@@ -3,6 +3,9 @@ package com.mappingsolution.data.places
 import android.util.Log
 import com.mappingsolution.data.model.Poi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,6 +29,12 @@ class OsmPoiRepository @Inject constructor(
     @Volatile private var lastFetchedZoom: Double? = null
 
     fun getById(id: String): Poi? = _pois.value.find { it.id == id }
+
+    /** Resolves and returns the image URL for an OSM POI's wikiRef, or null if none. */
+    suspend fun fetchImageUrl(id: String): String? = withContext(Dispatchers.IO) {
+        val ref = getById(id)?.wikiRef ?: return@withContext null
+        api.resolveImageUrl(ref)
+    }
 
     /** Merges POIs returned from a text search so the detail screen can look them up by ID. */
     fun registerSearchPois(pois: List<Poi>) {
@@ -51,13 +60,14 @@ class OsmPoiRepository @Inject constructor(
         west: Double,
         zoom: Double,
     ) = withContext(Dispatchers.IO) {
+        val totalStart = System.currentTimeMillis()
         try {
             _isLoading.value = true
 
             // Zoom-out by more than 1 level: discard high-zoom POIs so the user sees a clean low-zoom fetch.
             val prevZoom = lastFetchedZoom
             if (prevZoom != null && zoom < prevZoom - 1.0) {
-                android.util.Log.d("OsmPoiRepo", "refreshForViewport: zoom decreased from $prevZoom → $zoom, clearing POIs")
+                Log.d("OsmPoiRepo", "refreshForViewport: zoom decreased from $prevZoom → $zoom, clearing POIs")
                 _pois.value = emptyList()
                 lastFetchedBounds = null
             }
@@ -67,35 +77,49 @@ class OsmPoiRepository @Inject constructor(
             val currentBounds = FetchedBounds(north, south, east, west)
             val prevBounds = lastFetchedBounds
 
+            Log.d("OsmPoiRepo", "refreshForViewport zoom=%.1f bounds=[N=${"%.4f".format(north)} S=${"%.4f".format(south)} E=${"%.4f".format(east)} W=${"%.4f".format(west)}] cacheKey=$cacheKey prevBounds=$prevBounds".format(zoom))
+
+            val cacheStart = System.currentTimeMillis()
             val cached = cache.load(cacheKey)
+            Log.d("OsmPoiRepo", "cache.load took ${System.currentTimeMillis() - cacheStart}ms — hit=${cached != null} covers=${cached?.covers(south, west, north, east)}")
+
             if (cached != null && cached.covers(south, west, north, east)) {
-                _pois.value = mergeWithExisting(
-                    cached.pois.filter { it.lat in south..north && it.lng in west..east },
-                    south, north, east, west,
-                )
+                val filtered = cached.pois.filter { it.lat in south..north && it.lng in west..east }
+                Log.d("OsmPoiRepo", "CACHE HIT: ${filtered.size} POIs in viewport (${cached.pois.size} in cache file) — total ${System.currentTimeMillis() - totalStart}ms")
+                _pois.value = mergeWithExisting(filtered, south, north, east, west)
                 lastFetchedBounds = currentBounds
                 lastFetchedZoom = zoom
                 return@withContext
             }
 
             val strips = computeNewStrips(currentBounds, prevBounds)
+            Log.d("OsmPoiRepo", "computeNewStrips → ${strips.size} strip(s): ${strips.map { "[N=${"%.4f".format(it.north)} S=${"%.4f".format(it.south)} E=${"%.4f".format(it.east)} W=${"%.4f".format(it.west)}]" }}")
+
             if (strips.isEmpty()) {
                 val cachedPois = cached?.pois
                     ?.filter { it.lat in south..north && it.lng in west..east }
                     ?: emptyList()
+                Log.d("OsmPoiRepo", "No new strips needed; using ${cachedPois.size} cached POIs — total ${System.currentTimeMillis() - totalStart}ms")
                 _pois.value = mergeWithExisting(cachedPois, south, north, east, west)
                 lastFetchedBounds = currentBounds
                 lastFetchedZoom = zoom
                 return@withContext
             }
 
-            val allStripPois = mutableListOf<Poi>()
-            for (strip in strips) {
-                val stripPois = runCatching {
-                    api.fetchPois(strip.south, strip.west, strip.north, strip.east)
-                }.getOrElse { e -> Log.e("OsmPoiRepo", "Strip fetch failed", e); emptyList() }
-                allStripPois += stripPois
+            val fetchStart = System.currentTimeMillis()
+            val allStripPois = coroutineScope {
+                strips.mapIndexed { idx, strip ->
+                    async {
+                        val stripStart = System.currentTimeMillis()
+                        val result = runCatching {
+                            api.fetchPois(strip.south, strip.west, strip.north, strip.east)
+                        }.getOrElse { e -> Log.e("OsmPoiRepo", "Strip $idx fetch failed", e); emptyList() }
+                        Log.d("OsmPoiRepo", "Strip $idx returned ${result.size} POIs in ${System.currentTimeMillis() - stripStart}ms")
+                        result
+                    }
+                }.awaitAll().flatten()
             }
+            Log.d("OsmPoiRepo", "All ${strips.size} strip(s) fetched in ${System.currentTimeMillis() - fetchStart}ms — total raw POIs: ${allStripPois.size}")
 
             // Deduplicate: cached + existing in-viewport + freshly fetched strip POIs.
             val existingInViewport = _pois.value.filter { it.lat in south..north && it.lng in west..east }
@@ -105,12 +129,13 @@ class OsmPoiRepository @Inject constructor(
                 allStripPois.associateBy { it.id }
             ).values.toList()
 
-            // Store with full viewport bounds so the coverage check passes on return visits.
+            val cacheWriteStart = System.currentTimeMillis()
             cache.store(cacheKey, combined, south, west, north, east)
-            _pois.value = mergeWithExisting(
-                combined.filter { it.lat in south..north && it.lng in west..east },
-                south, north, east, west,
-            )
+            Log.d("OsmPoiRepo", "cache.store took ${System.currentTimeMillis() - cacheWriteStart}ms — stored ${combined.size} POIs")
+
+            val inViewport = combined.filter { it.lat in south..north && it.lng in west..east }
+            _pois.value = mergeWithExisting(inViewport, south, north, east, west)
+            Log.d("OsmPoiRepo", "refreshForViewport DONE — ${inViewport.size} POIs shown, total time ${System.currentTimeMillis() - totalStart}ms")
             lastFetchedBounds = currentBounds
             lastFetchedZoom = zoom
         } finally {

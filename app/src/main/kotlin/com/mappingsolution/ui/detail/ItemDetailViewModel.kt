@@ -13,6 +13,7 @@ import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.model.Route
 import com.mappingsolution.data.places.GooglePlacesRepository
 import com.mappingsolution.data.places.OsmPoiRepository
+import com.mappingsolution.data.places.PlaceDetail
 import com.mappingsolution.data.util.StorageManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -86,11 +87,21 @@ class ItemDetailViewModel @Inject constructor(
         val isBulk = personalPoi == null
         val group = poi.groupId?.let { groupRepository.getById(it) }
         val mediaDir = storageManager.getPoiMediaDir(poi.name, poi.id)
-        val absolutePaths = if (isBulk) {
-            // For bulk POIs use actual files on disk — stored filenames may differ from GPX references
-            mediaDir.listFiles()?.sortedBy { it.name }?.map { it.absolutePath } ?: emptyList()
-        } else {
-            poi.mediaPaths.map { filename -> mediaDir.absolutePath + "/" + filename }
+        val absolutePaths = when {
+            isBulk && group?.sourceZipPath != null -> {
+                // Zip-backed import: resolve filenames to zip:// URIs for on-demand loading
+                val zipPath = group.sourceZipPath
+                poi.mediaPaths.map { filename ->
+                    com.mappingsolution.data.image.ZipImageFetcher.uriFor(zipPath, filename).toString()
+                }
+            }
+            isBulk -> {
+                // File-backed import: scan the per-group media directory
+                mediaDir.listFiles()?.sortedBy { it.name }?.map { it.absolutePath } ?: emptyList()
+            }
+            else -> {
+                poi.mediaPaths.map { filename -> mediaDir.absolutePath + "/" + filename }
+            }
         }
         _state.update {
             ItemDetailState(
@@ -112,24 +123,24 @@ class ItemDetailViewModel @Inject constructor(
             return
         }
         val group = poi.groupId?.let { groupRepository.getById(it) }
-        val photoUrls = runCatching {
-            googlePlacesRepository.fetchPhotoUrls(id)
-        }.getOrElse { emptyList() }
+        val detail = runCatching {
+            googlePlacesRepository.fetchPlaceDetail(id)
+        }.getOrElse { PlaceDetail() }
         _state.update {
             ItemDetailState(
                 item = DetailItem.PoiDetail(
                     poi = poi,
                     group = group,
-                    mediaPaths = photoUrls,
+                    mediaPaths = detail.photoUrls,
                     isReadOnly = true,
                     sourceType = DestinationSource.GOOGLE,
                 ),
                 isLoading = false,
-                isContactInfoLoading = true,
+                website = detail.contact?.website,
+                phone = detail.contact?.phone,
+                isContactInfoLoading = false,
             )
         }
-        val contact = runCatching { googlePlacesRepository.fetchContactInfo(id) }.getOrElse { null }
-        _state.update { it.copy(website = contact?.website, phone = contact?.phone, isContactInfoLoading = false) }
     }
 
     private suspend fun loadOsmPoi() {
@@ -138,12 +149,13 @@ class ItemDetailViewModel @Inject constructor(
             return
         }
         val group = poi.groupId?.let { groupRepository.getById(it) }
+        val imageUrl = runCatching { osmPoiRepository.fetchImageUrl(id) }.getOrElse { null }
         _state.update {
             ItemDetailState(
                 item = DetailItem.PoiDetail(
                     poi = poi,
                     group = group,
-                    mediaPaths = emptyList(),
+                    mediaPaths = listOfNotNull(imageUrl),
                     isReadOnly = true,
                     sourceType = DestinationSource.OSM,
                 ),

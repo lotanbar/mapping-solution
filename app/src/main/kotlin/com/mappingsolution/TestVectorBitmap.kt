@@ -16,11 +16,11 @@ fun createPinBitmap(
     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     
-    val pinColor = try {
+    val pinColor = desaturateColor(try {
         Color.parseColor(colorHex)
     } catch (e: Exception) {
         Color.BLUE
-    }
+    })
 
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = pinColor
@@ -198,9 +198,59 @@ private val ICON_BG_COLORS: Map<String, Int> = mapOf(
     "visibility"      to 0xFFFFB300.toInt(),
     "work"            to 0xFFF57F17.toInt(),
     "business_center" to 0xFFF57F17.toInt(),
+    // ── Heritage & Religion — each faith / era has its own hue ──────────────
+    "castle"           to 0xFF7B1010.toInt(),  // dark maroon:   medieval stone
+    "architecture"     to 0xFF4E342E.toInt(),  // dark espresso: ancient ruins / archaeology
+    "church"           to 0xFF1A237E.toInt(),  // deep navy:     Christian heritage
+    "mosque"           to 0xFF1B5B35.toInt(),  // dark emerald:  Islamic heritage
+    "synagogue"        to 0xFF1565C0.toInt(),  // royal blue:    Jewish heritage
+    "temple_hindu"     to 0xFFBF6000.toInt(),  // dark saffron:  Hindu / Buddhist temples
+    "local_cemetery"   to 0xFF616161.toInt(),  // neutral grey:  somber / burial
+    "military_tech"    to 0xFF4E5B0F.toInt(),  // olive drab:    military / battlefield
+    "local_post_office" to 0xFFD50000.toInt(), // vivid red:     post / communications
+    "history_edu"      to 0xFF5C4A1A.toInt(),  // khaki parchment: historical archive / documents
+    // ── New semantic icons — spread across the hue wheel ────────────────────
+    "local_library"    to 0xFF006064.toInt(),  // dark cyan:      knowledge / library
+    "science"          to 0xFF311B92.toInt(),  // ultra-violet:   science / research
+    "cottage"          to 0xFF8D5524.toInt(),  // warm sienna:    rural / cottage
+    "stadium"          to 0xFFD84315.toInt(),  // burnt deep-orange: stadium / arena
+    "local_florist"    to 0xFFC2185B.toInt(),  // deep rose:      botanical / flowers
+    "agriculture"      to 0xFF827717.toInt(),  // harvest olive:  farm / vineyard / orchard
+    "celebration"      to 0xFF9C27B0.toInt(),  // vibrant purple: festival / event
+    "outdoor_grill"    to 0xFFBF4000.toInt(),  // charcoal-orange: BBQ / outdoor cooking
+    "theater_comedy"   to 0xFF6A0080.toInt(),  // deep violet:    live theatre / comedy
+    "nature_people"    to 0xFF1A7A2E.toInt(),  // vibrant forest: zoo / wildlife encounter
+    "scuba_diving"     to 0xFF01279B.toInt(),  // deep ocean navy: diving / snorkelling
+    "wind_power"       to 0xFF76A828.toInt(),  // lime-herbaceous: windmill / wind turbine
+    "houseboat"        to 0xFF006399.toInt(),  // dark sky-blue:  floating / houseboat
+    "biotech"          to 0xFF00574D.toInt(),  // darker teal:    lab / research centre
+    // ── New icons added this session ─────────────────────────────────────────
+    "filter_hdr"       to 0xFF78909C.toInt(),  // blue-grey volcanic slate:  volcano / peak
+    "foundation"       to 0xFFA1887F.toInt(),  // warm sandstone:             archaeological ruins
+    "local_drink"      to 0xFF00BCD4.toInt(),  // bright cyan:                spring / well / fountain
+    "hot_tub"          to 0xFFFF7043.toInt(),  // deep coral-orange:          hot spring / geyser
+    "water"            to 0xFF1E88E5.toInt(),  // bright royal blue:          river / stream / wadi
+    "temple_buddhist"  to 0xFFFF8F00.toInt(),  // golden amber-saffron:       Buddhist temple / pagoda
+    "rowing"           to 0xFF26A69A.toInt(),  // turquoise-teal:             fishing / river sport
+    "villa"            to 0xFF795548.toInt(),  // warm terracotta brown:      historic manor / villa
+    "ev_station"       to 0xFF558B00.toInt(),  // deep lime-olive:            EV charging station
+    "sports_tennis"    to 0xFFCDDC39.toInt(),  // bright lime-yellow:         tennis court / racquet sports
+    "yard"             to 0xFF8BC34A.toInt(),  // spring lawn green:          courtyard / ornamental garden
+    "holiday_village"  to 0xFF3E2723.toInt(),  // very dark coffee-brown:     village / rural settlement
+    "crisis_alert"     to 0xFFD32F2F.toInt(),  // emergency red:              accident / danger spot
+    "fork_right"       to 0xFF388E3C.toInt(),  // trail-green:                path fork / trail junction
+    "sensor_door"      to 0xFF8D6E63.toInt(),  // warm brown:                 gate / historical entrance
 )
 
 private val DEFAULT_BG = 0xFF3949AB.toInt()
+
+/** Reduces the saturation of [color] by multiplying the HSV saturation by [factor]. */
+private fun desaturateColor(color: Int, factor: Float = 0.75f): Int {
+    val hsv = FloatArray(3)
+    Color.colorToHSV(color, hsv)
+    hsv[1] *= factor
+    return Color.HSVToColor(hsv)
+}
 
 /**
  * Creates a square bitmap of [size]×[size] with a rounded-rect background coloured from
@@ -214,12 +264,43 @@ fun createSquareIcon(
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     val cornerRadius = size * 0.20f
-    val bgColor = ICON_BG_COLORS[iconKey] ?: DEFAULT_BG
+    val bgColor = desaturateColor(ICON_BG_COLORS[iconKey] ?: DEFAULT_BG)
     val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = bgColor
         style = Paint.Style.FILL
     }
     canvas.drawRoundRect(RectF(0f, 0f, size.toFloat(), size.toFloat()), cornerRadius, cornerRadius, bgPaint)
+    return bitmap
+}
+
+/**
+ * Creates a square bitmap of [size]×[size] with a hexagon background coloured from
+ * [ICON_BG_COLORS]. Used for OSM POI markers.
+ * The white icon is drawn on top by [createPoiHexagon] in MapComponent.
+ */
+fun createHexagonIcon(
+    iconKey: String,
+    size: Int = 80,
+): Bitmap {
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val bgColor = desaturateColor(ICON_BG_COLORS[iconKey] ?: DEFAULT_BG)
+    val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = bgColor
+        style = Paint.Style.FILL
+    }
+    val cx = size / 2f
+    val cy = size / 2f
+    val r = size / 2f - 1f
+    val path = Path()
+    for (i in 0 until 6) {
+        val angle = Math.toRadians((-90 + i * 60).toDouble())
+        val x = (cx + r * Math.cos(angle)).toFloat()
+        val y = (cy + r * Math.sin(angle)).toFloat()
+        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+    }
+    path.close()
+    canvas.drawPath(path, bgPaint)
     return bitmap
 }
 
@@ -235,7 +316,7 @@ fun createCircleIcon(
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     val cx = size / 2f
-    val bgColor = ICON_BG_COLORS[iconKey] ?: DEFAULT_BG
+    val bgColor = desaturateColor(ICON_BG_COLORS[iconKey] ?: DEFAULT_BG)
     val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = bgColor
         style = Paint.Style.FILL
