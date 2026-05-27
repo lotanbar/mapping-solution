@@ -56,7 +56,9 @@ const val OSM_POI_GROUP_ID = "osm-poi-group"
 const val NEARBY_POI_MIN_ZOOM = 8.0
 
 const val GOOGLE_PLACES_FETCH_DEBOUNCE_MS = 300L
-const val GOOGLE_PLACES_MAX_RESULTS = 10     // Google POIs shown per viewport (one API page)
+const val GOOGLE_PLACES_MAX_RESULTS = 20     // Google POIs shown per viewport
+const val OSM_POI_MAX_RESULTS = 20           // OSM POIs shown per viewport
+const val BULK_POI_MAX_RESULTS = 30          // Imported (bulk) POIs shown per viewport
 const val GOOGLE_PLACES_CACHE_TTL_MS = 7L * 24 * 60 * 60 * 1000   // 7 days
 const val GOOGLE_PLACES_FIELD_MASK = "places.id,places.displayName,places.location,places.types"
 

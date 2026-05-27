@@ -62,7 +62,7 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
                             .takeIf { it.isNotBlank() } ?: return@runCatching null
                         val cls = el.optString("class", "")
                         val type = el.optString("type", "")
-                        val resolvedIconKey = PoiIconResolver.resolveForOsmTags(mapOf(cls to type))
+                        val resolvedIconKey = PoiIconResolver.resolveForOsmTags(mapOf(cls to type), name)
                         val prefix = when (osmType) {
                             "node" -> "n"
                             "way" -> "w"
@@ -141,7 +141,8 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
                                 ?: tags.optString("name:en").takeIf { it.isNotBlank() }
                                 ?: return@runCatching null
                             val tagsMap = tags.keys().asSequence().associateWith { tags.getString(it) }
-                            val resolvedIconKey = PoiIconResolver.resolveForOsmTags(tagsMap)
+                            val desc = tagsMap["description"] ?: tagsMap["description:he"] ?: ""
+                            val resolvedIconKey = PoiIconResolver.resolveForOsmTags(tagsMap, name, desc)
                             val wikiRef = tagsMap["image"]?.takeIf { it.startsWith("http") }
                                 ?: tagsMap["wikimedia_commons"]?.takeIf { it.startsWith("File:") }
                                 ?: tagsMap["wikipedia"]?.takeIf { it.contains(":") && !it.startsWith("http") }

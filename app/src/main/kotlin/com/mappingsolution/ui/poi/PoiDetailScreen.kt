@@ -69,7 +69,7 @@ fun PoiDetailScreen(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState()),
             ) {
-                val galleryHeight = LocalConfiguration.current.screenHeightDp.dp * 0.45f
+                val galleryHeight = LocalConfiguration.current.screenHeightDp.dp * 0.32f
                 if (state.mediaPaths.isNotEmpty()) {
                     val mediaItems = state.mediaPaths.mapIndexed { index, path ->
                         MediaUtils.createMediaItem(path, index)

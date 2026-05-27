@@ -9,12 +9,17 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.ImageNotSupported
 import androidx.compose.material.icons.filled.Layers
@@ -49,6 +54,7 @@ import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.places.GOOGLE_PLACES_GROUP_ID
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.ui.common.IconCatalog
+import androidx.compose.ui.res.painterResource
 import java.io.File
 import android.net.Uri
 import kotlin.random.Random
@@ -93,6 +99,7 @@ fun PoiMediaPager(
     mediaItems: List<MediaItem>,
     onItemClick: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    onRemoveItem: ((Int) -> Unit)? = null,
 ) {
     val pagerState = rememberPagerState(pageCount = { mediaItems.size })
     val context = LocalContext.current
@@ -157,6 +164,24 @@ fun PoiMediaPager(
                                     .size(28.dp),
                             )
                         }
+                    }
+                }
+
+                if (onRemoveItem != null) {
+                    IconButton(
+                        onClick = { onRemoveItem(page) },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(8.dp)
+                            .size(36.dp)
+                            .background(Color.Black.copy(alpha = 0.45f), CircleShape),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Remove",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp),
+                        )
                     }
                 }
             }
@@ -224,7 +249,7 @@ fun PoiGroupSourceIcon(
         }
         else -> {
             Icon(
-                imageVector = IconCatalog.iconVector(group.iconKey),
+                painter = painterResource(IconCatalog.iconRes(group.iconKey)),
                 contentDescription = null,
                 modifier = modifier.size(size),
                 tint = tint,
@@ -258,15 +283,23 @@ fun PoiInfoBlock(
         )
 
         if (!poi.description.isNullOrBlank()) {
-            Text(
-                text = poi.description,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    textDirection = poi.description.resolvedTextDirection(),
-                    textAlign = poi.description.resolvedTextAlign(),
-                ),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 180.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text(
+                    text = poi.description,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontSize = androidx.compose.ui.unit.TextUnit(18.4f, androidx.compose.ui.unit.TextUnitType.Sp),
+                        textDirection = poi.description.resolvedTextDirection(),
+                        textAlign = poi.description.resolvedTextAlign(),
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
 
         group?.let {
@@ -276,12 +309,14 @@ fun PoiInfoBlock(
             ) {
                 PoiGroupSourceIcon(
                     group = it,
-                    size = 16.dp,
+                    size = 18.dp,
                     tint = MaterialTheme.colorScheme.primary,
                 )
                 Text(
                     text = if (it.id == OSM_POI_GROUP_ID) "Open Street Map" else it.name,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = androidx.compose.ui.unit.TextUnit(16.1f, androidx.compose.ui.unit.TextUnitType.Sp),
+                    ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

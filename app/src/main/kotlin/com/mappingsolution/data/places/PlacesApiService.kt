@@ -79,7 +79,7 @@ class PlacesApiService @Inject constructor(private val httpClient: OkHttpClient)
                         val types = if (typesArray != null) {
                             (0 until typesArray.length()).map { typesArray.getString(it) }
                         } else emptyList()
-                        val resolvedIconKey = PoiIconResolver.resolveForGoogleType(types)
+                        val resolvedIconKey = PoiIconResolver.resolveForGoogleType(types, name)
                         Poi(
                             id = place.getString("id"),
                             groupId = GOOGLE_PLACES_GROUP_ID,
@@ -155,7 +155,7 @@ class PlacesApiService @Inject constructor(private val httpClient: OkHttpClient)
                         val types = if (typesArray != null) {
                             (0 until typesArray.length()).map { typesArray.getString(it) }
                         } else emptyList()
-                        val resolvedIconKey = PoiIconResolver.resolveForGoogleType(types)
+                        val resolvedIconKey = PoiIconResolver.resolveForGoogleType(types, name)
                         Poi(
                             id = place.getString("id"),
                             groupId = GOOGLE_PLACES_GROUP_ID,
