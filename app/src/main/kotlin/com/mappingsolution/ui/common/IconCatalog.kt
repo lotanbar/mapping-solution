@@ -1,243 +1,163 @@
 package com.mappingsolution.ui.common
 
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.DirectionsBike
-import androidx.compose.material.icons.automirrored.filled.DirectionsRun
-import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
-import androidx.compose.material.icons.automirrored.filled.Label
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.filled.Agriculture
-import androidx.compose.material.icons.filled.Biotech
-import androidx.compose.material.icons.filled.Celebration
-import androidx.compose.material.icons.filled.Cottage
-import androidx.compose.material.icons.filled.CrisisAlert
-import androidx.compose.material.icons.filled.EvStation
-import androidx.compose.material.icons.filled.FilterHdr
-import androidx.compose.material.icons.filled.ForkRight
-import androidx.compose.material.icons.filled.Foundation
-import androidx.compose.material.icons.filled.HistoryEdu
-import androidx.compose.material.icons.filled.HolidayVillage
-import androidx.compose.material.icons.filled.HotTub
-import androidx.compose.material.icons.filled.Houseboat
-import androidx.compose.material.icons.filled.LocalDrink
-import androidx.compose.material.icons.filled.LocalFlorist
-import androidx.compose.material.icons.filled.LocalLibrary
-import androidx.compose.material.icons.filled.NaturePeople
-import androidx.compose.material.icons.filled.OutdoorGrill
-import androidx.compose.material.icons.filled.Rowing
-import androidx.compose.material.icons.filled.Science
-import androidx.compose.material.icons.filled.ScubaDiving
-import androidx.compose.material.icons.filled.SensorDoor
-import androidx.compose.material.icons.filled.SportsTennis
-import androidx.compose.material.icons.filled.Stadium
-import androidx.compose.material.icons.filled.TempleBuddhist
-import androidx.compose.material.icons.filled.TheaterComedy
-import androidx.compose.material.icons.filled.Villa
-import androidx.compose.material.icons.filled.Water
-import androidx.compose.material.icons.filled.WindPower
-import androidx.compose.material.icons.filled.Yard
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.annotation.DrawableRes
+import com.mappingsolution.R
 
+/**
+ * Single source of truth for icons used throughout the app.
+ *
+ * Keys are Maki icon names (hyphen-separated, lower-case), matching the
+ * drawable resource names with the "ic_maki_" prefix and hyphens replaced
+ * by underscores (e.g. key "fast-food" → R.drawable.ic_maki_fast_food).
+ *
+ * Use [iconRes] to look up a drawable by key; unknown keys fall back to
+ * [R.drawable.ic_maki_marker].
+ */
 object IconCatalog {
 
-    data class IconEntry(val key: String, val vector: ImageVector, val label: String)
+    data class IconEntry(val key: String, @DrawableRes val res: Int, val label: String)
     data class IconCategory(val name: String, val icons: List<IconEntry>)
 
     val categories: List<IconCategory> = listOf(
         IconCategory(
-            "Location", listOf(
-                IconEntry("place", Icons.Default.Place, "Place"),
-                IconEntry("location_on", Icons.Default.LocationOn, "Location"),
-                IconEntry("my_location", Icons.Default.MyLocation, "My Location"),
-                IconEntry("explore", Icons.Default.Explore, "Explore"),
-                IconEntry("travel_explore", Icons.Default.TravelExplore, "Travel"),
-                IconEntry("navigation", Icons.Default.Navigation, "Navigation"),
-                IconEntry("near_me", Icons.Default.NearMe, "Near Me"),
-                IconEntry("gps_fixed", Icons.Default.GpsFixed, "GPS"),
-                IconEntry("flag", Icons.Default.Flag, "Flag"),
-                IconEntry("tour", Icons.Default.Tour, "Tour"),
-                IconEntry("fork_right", Icons.Default.ForkRight, "Fork"),
-                IconEntry("map", Icons.Default.Map, "Map"),
-                IconEntry("push_pin", Icons.Default.PushPin, "Pin"),
-                IconEntry("satellite", Icons.Default.Satellite, "Satellite"),
-                IconEntry("location_city", Icons.Default.LocationCity, "City"),
+            "Food & Drink", listOf(
+                IconEntry("restaurant",   R.drawable.ic_maki_restaurant,   "Restaurant"),
+                IconEntry("cafe",         R.drawable.ic_maki_cafe,         "Café"),
+                IconEntry("bar",          R.drawable.ic_maki_bar,          "Bar / Pub"),
+                IconEntry("bakery",       R.drawable.ic_maki_bakery,       "Bakery"),
+                IconEntry("fast-food",    R.drawable.ic_maki_fast_food,    "Fast Food"),
+                IconEntry("ice-cream",    R.drawable.ic_maki_ice_cream,    "Ice Cream"),
+                IconEntry("confectionery",R.drawable.ic_maki_confectionery,"Sweets"),
+                IconEntry("grocery",      R.drawable.ic_maki_grocery,      "Grocery"),
+                IconEntry("convenience",  R.drawable.ic_maki_convenience,  "Convenience"),
+                IconEntry("beer",         R.drawable.ic_maki_beer,         "Beer / Wine"),
+                IconEntry("bbq",          R.drawable.ic_maki_bbq,          "BBQ"),
             )
         ),
         IconCategory(
             "Nature", listOf(
-                IconEntry("park", Icons.Default.Park, "Park"),
-                IconEntry("terrain", Icons.Default.Terrain, "Mountain"),
-                IconEntry("filter_hdr", Icons.Default.FilterHdr, "Volcano"),
-                IconEntry("waves", Icons.Default.Waves, "Waterfall"),
-                IconEntry("water", Icons.Default.Water, "River"),
-                IconEntry("water_drop", Icons.Default.WaterDrop, "Water"),
-                IconEntry("local_drink", Icons.Default.LocalDrink, "Spring"),
-                IconEntry("hot_tub", Icons.Default.HotTub, "Hot Spring"),
-                IconEntry("landscape", Icons.Default.Landscape, "Landscape"),
-                IconEntry("nature", Icons.Default.Nature, "Nature"),
-                IconEntry("nature_people", Icons.Default.NaturePeople, "Wildlife"),
-                IconEntry("grass", Icons.Default.Grass, "Grass"),
-                IconEntry("forest", Icons.Default.Forest, "Forest"),
-                IconEntry("yard", Icons.Default.Yard, "Garden"),
-                IconEntry("spa", Icons.Default.Spa, "Spa"),
-                IconEntry("filter_vintage", Icons.Default.FilterVintage, "Flower"),
-                IconEntry("local_florist", Icons.Default.LocalFlorist, "Florist"),
-                IconEntry("agriculture", Icons.Default.Agriculture, "Farm"),
-                IconEntry("eco", Icons.Default.Eco, "Eco"),
-                IconEntry("wind_power", Icons.Default.WindPower, "Wind"),
-                IconEntry("ac_unit", Icons.Default.AcUnit, "Snow"),
-                IconEntry("wb_sunny", Icons.Default.WbSunny, "Sunny"),
-                IconEntry("cloud", Icons.Default.Cloud, "Cloud"),
+                IconEntry("mountain",       R.drawable.ic_maki_mountain,       "Mountain / Peak"),
+                IconEntry("volcano",        R.drawable.ic_maki_volcano,        "Volcano"),
+                IconEntry("waterfall",      R.drawable.ic_maki_waterfall,      "Waterfall"),
+                IconEntry("cave",           R.drawable.ic_maki_cave,           "Cave / Underground"),
+                IconEntry("natural",        R.drawable.ic_maki_natural,        "Nature"),
+                IconEntry("park",           R.drawable.ic_maki_park,           "Park / Forest"),
+                IconEntry("beach",          R.drawable.ic_maki_beach,          "Beach"),
+                IconEntry("wetland",        R.drawable.ic_maki_wetland,        "Wetland"),
+                IconEntry("garden",         R.drawable.ic_maki_garden,         "Garden"),
+                IconEntry("water",          R.drawable.ic_maki_water,          "Water"),
+                IconEntry("dam",            R.drawable.ic_maki_dam,            "Dam"),
             )
         ),
         IconCategory(
-            "Food & Drink", listOf(
-                IconEntry("restaurant", Icons.Default.Restaurant, "Restaurant"),
-                IconEntry("local_cafe", Icons.Default.LocalCafe, "Cafe"),
-                IconEntry("local_bar", Icons.Default.LocalBar, "Bar"),
-                IconEntry("fastfood", Icons.Default.Fastfood, "Fast Food"),
-                IconEntry("lunch_dining", Icons.Default.LunchDining, "Lunch"),
-                IconEntry("dinner_dining", Icons.Default.DinnerDining, "Dinner"),
-                IconEntry("brunch_dining", Icons.Default.BrunchDining, "Brunch"),
-                IconEntry("bakery_dining", Icons.Default.BakeryDining, "Bakery"),
-                IconEntry("ramen_dining", Icons.Default.RamenDining, "Ramen"),
-                IconEntry("local_pizza", Icons.Default.LocalPizza, "Pizza"),
-                IconEntry("icecream", Icons.Default.Icecream, "Ice Cream"),
-                IconEntry("cake", Icons.Default.Cake, "Cake"),
-                IconEntry("wine_bar", Icons.Default.WineBar, "Wine"),
-                IconEntry("coffee", Icons.Default.Coffee, "Coffee"),
+            "Heritage", listOf(
+                IconEntry("ruins",      R.drawable.ic_maki_ruins,      "Ruins / Archaeological"),
+                IconEntry("quarry",     R.drawable.ic_maki_quarry,     "Quarry"),
+                IconEntry("archway",    R.drawable.ic_maki_archway,    "Caravanserai"),
+                IconEntry("historic",   R.drawable.ic_maki_historic,   "Historic (generic)"),
+                IconEntry("castle",     R.drawable.ic_maki_castle,     "Castle / Fort"),
+                IconEntry("monument",   R.drawable.ic_maki_monument,   "Monument"),
+                IconEntry("cemetery",   R.drawable.ic_maki_cemetery,   "Cemetery / Tomb"),
+                IconEntry("gate",       R.drawable.ic_maki_gate,       "Gate"),
+                IconEntry("lighthouse", R.drawable.ic_maki_lighthouse, "Lighthouse"),
+                IconEntry("windmill",   R.drawable.ic_maki_windmill,   "Windmill"),
+                IconEntry("watermill",  R.drawable.ic_maki_watermill,  "Watermill"),
+                IconEntry("bridge",     R.drawable.ic_maki_bridge,     "Bridge"),
             )
         ),
         IconCategory(
-            "Activities", listOf(
-                IconEntry("directions_walk", Icons.AutoMirrored.Filled.DirectionsWalk, "Walking"),
-                IconEntry("directions_run", Icons.AutoMirrored.Filled.DirectionsRun, "Running"),
-                IconEntry("directions_bike", Icons.AutoMirrored.Filled.DirectionsBike, "Cycling"),
-                IconEntry("hiking", Icons.Default.Hiking, "Hiking"),
-                IconEntry("fitness_center", Icons.Default.FitnessCenter, "Gym"),
-                IconEntry("pool", Icons.Default.Pool, "Swimming"),
-                IconEntry("sailing", Icons.Default.Sailing, "Sailing"),
-                IconEntry("kayaking", Icons.Default.Kayaking, "Kayaking"),
-                IconEntry("scuba_diving", Icons.Default.ScubaDiving, "Diving"),
-                IconEntry("snowboarding", Icons.Default.Snowboarding, "Snowboarding"),
-                IconEntry("downhill_skiing", Icons.Default.DownhillSkiing, "Skiing"),
-                IconEntry("surfing", Icons.Default.Surfing, "Surfing"),
-                IconEntry("sports_soccer", Icons.Default.SportsSoccer, "Soccer"),
-                IconEntry("sports_basketball", Icons.Default.SportsBasketball, "Basketball"),
-                IconEntry("sports_tennis", Icons.Default.SportsTennis, "Tennis"),
-                IconEntry("stadium", Icons.Default.Stadium, "Stadium"),
-                IconEntry("golf_course", Icons.Default.GolfCourse, "Golf"),
-                IconEntry("paragliding", Icons.Default.Paragliding, "Paragliding"),
-                IconEntry("outdoor_grill", Icons.Default.OutdoorGrill, "BBQ"),
-                IconEntry("rowing", Icons.Default.Rowing, "Fishing"),
-            )
-        ),
-        IconCategory(
-            "Accommodation", listOf(
-                IconEntry("hotel", Icons.Default.Hotel, "Hotel"),
-                IconEntry("home", Icons.Default.Home, "Home"),
-                IconEntry("apartment", Icons.Default.Apartment, "Apartment"),
-                IconEntry("house", Icons.Default.House, "House"),
-                IconEntry("cottage", Icons.Default.Cottage, "Cottage"),
-                IconEntry("houseboat", Icons.Default.Houseboat, "Houseboat"),
-                IconEntry("holiday_village", Icons.Default.HolidayVillage, "Village"),
-                IconEntry("night_shelter", Icons.Default.NightShelter, "Shelter"),
-                IconEntry("beach_access", Icons.Default.BeachAccess, "Beach"),
-                IconEntry("king_bed", Icons.Default.KingBed, "Bed"),
-                IconEntry("single_bed", Icons.Default.SingleBed, "Single Bed"),
-                IconEntry("meeting_room", Icons.Default.MeetingRoom, "Room"),
-            )
-        ),
-        IconCategory(
-            "Transport", listOf(
-                IconEntry("directions_car", Icons.Default.DirectionsCar, "Car"),
-                IconEntry("directions_bus", Icons.Default.DirectionsBus, "Bus"),
-                IconEntry("train", Icons.Default.Train, "Train"),
-                IconEntry("flight", Icons.Default.Flight, "Flight"),
-                IconEntry("motorcycle", Icons.Default.Motorcycle, "Motorcycle"),
-                IconEntry("two_wheeler", Icons.Default.TwoWheeler, "Two Wheeler"),
-                IconEntry("electric_car", Icons.Default.ElectricCar, "Electric Car"),
-                IconEntry("ev_station", Icons.Default.EvStation, "EV Charge"),
-                IconEntry("directions_boat", Icons.Default.DirectionsBoat, "Boat"),
-                IconEntry("anchor", Icons.Default.Anchor, "Anchor"),
-                IconEntry("local_taxi", Icons.Default.LocalTaxi, "Taxi"),
-                IconEntry("tram", Icons.Default.Tram, "Tram"),
+            "Religion", listOf(
+                IconEntry("place-of-worship",  R.drawable.ic_maki_place_of_worship,  "Place of Worship"),
+                IconEntry("religious-christian",R.drawable.ic_maki_religious_christian,"Church"),
+                IconEntry("religious-muslim",   R.drawable.ic_maki_religious_muslim,  "Mosque"),
+                IconEntry("religious-jewish",   R.drawable.ic_maki_religious_jewish,  "Synagogue"),
+                IconEntry("religious-buddhist", R.drawable.ic_maki_religious_buddhist,"Buddhist Temple"),
+                IconEntry("religious-shinto",   R.drawable.ic_maki_religious_shinto,  "Temple / Shrine"),
             )
         ),
         IconCategory(
             "Services", listOf(
-                IconEntry("local_hospital", Icons.Default.LocalHospital, "Hospital"),
-                IconEntry("local_pharmacy", Icons.Default.LocalPharmacy, "Pharmacy"),
-                IconEntry("local_gas_station", Icons.Default.LocalGasStation, "Gas Station"),
-                IconEntry("local_parking", Icons.Default.LocalParking, "Parking"),
-                IconEntry("shopping_cart", Icons.Default.ShoppingCart, "Shopping"),
-                IconEntry("storefront", Icons.Default.Storefront, "Store"),
-                IconEntry("local_atm", Icons.Default.LocalAtm, "ATM"),
-                IconEntry("account_balance", Icons.Default.AccountBalance, "Bank"),
-                IconEntry("school", Icons.Default.School, "School"),
-                IconEntry("local_police", Icons.Default.LocalPolice, "Police"),
-                IconEntry("local_fire_department", Icons.Default.LocalFireDepartment, "Fire Dept"),
-                IconEntry("local_laundry", Icons.Default.LocalLaundryService, "Laundry"),
-                IconEntry("biotech", Icons.Default.Biotech, "Lab"),
+                IconEntry("hospital",         R.drawable.ic_maki_hospital,         "Hospital"),
+                IconEntry("pharmacy",         R.drawable.ic_maki_pharmacy,         "Pharmacy"),
+                IconEntry("school",           R.drawable.ic_maki_school,           "School"),
+                IconEntry("college",          R.drawable.ic_maki_college,          "University"),
+                IconEntry("bank",             R.drawable.ic_maki_bank,             "Bank / ATM"),
+                IconEntry("parking",          R.drawable.ic_maki_parking,          "Parking"),
+                IconEntry("fuel",             R.drawable.ic_maki_fuel,             "Fuel"),
+                IconEntry("charging-station", R.drawable.ic_maki_charging_station, "EV Charging"),
+                IconEntry("police",           R.drawable.ic_maki_police,           "Police"),
+                IconEntry("fire-station",     R.drawable.ic_maki_fire_station,     "Fire Station"),
+                IconEntry("laundry",          R.drawable.ic_maki_laundry,          "Laundry"),
+                IconEntry("shop",             R.drawable.ic_maki_shop,             "Shop"),
+                IconEntry("information",      R.drawable.ic_maki_information,      "Information"),
+            )
+        ),
+        IconCategory(
+            "Transport", listOf(
+                IconEntry("airport",   R.drawable.ic_maki_airport,   "Airport"),
+                IconEntry("rail",      R.drawable.ic_maki_rail,      "Train"),
+                IconEntry("rail-light",R.drawable.ic_maki_rail_light,"Tram / Metro"),
+                IconEntry("bus",       R.drawable.ic_maki_bus,       "Bus"),
+                IconEntry("ferry",     R.drawable.ic_maki_ferry,     "Ferry"),
+                IconEntry("car",       R.drawable.ic_maki_car,       "Car"),
+                IconEntry("bicycle",   R.drawable.ic_maki_bicycle,   "Bicycle"),
+                IconEntry("taxi",      R.drawable.ic_maki_taxi,      "Taxi"),
+                IconEntry("harbor",    R.drawable.ic_maki_harbor,    "Harbor / Marina"),
+            )
+        ),
+        IconCategory(
+            "Accommodation", listOf(
+                IconEntry("lodging",  R.drawable.ic_maki_lodging,  "Hotel / Lodge"),
+                IconEntry("campsite", R.drawable.ic_maki_campsite, "Campsite"),
+                IconEntry("shelter",  R.drawable.ic_maki_shelter,  "Shelter / Hut"),
+                IconEntry("home",     R.drawable.ic_maki_home,     "Home"),
             )
         ),
         IconCategory(
             "Entertainment", listOf(
-                IconEntry("museum", Icons.Default.Museum, "Museum"),
-                IconEntry("local_library", Icons.Default.LocalLibrary, "Library"),
-                IconEntry("science", Icons.Default.Science, "Science"),
-                IconEntry("music_note", Icons.Default.MusicNote, "Music"),
-                IconEntry("nightlife", Icons.Default.Nightlife, "Nightlife"),
-                IconEntry("theaters", Icons.Default.Theaters, "Cinema"),
-                IconEntry("theater_comedy", Icons.Default.TheaterComedy, "Theatre"),
-                IconEntry("celebration", Icons.Default.Celebration, "Festival"),
-                IconEntry("casino", Icons.Default.Casino, "Casino"),
-                IconEntry("sports_bar", Icons.Default.SportsBar, "Sports Bar"),
-                IconEntry("sports_esports", Icons.Default.SportsEsports, "Gaming"),
-                IconEntry("photo_camera", Icons.Default.PhotoCamera, "Gallery"),
-                IconEntry("attractions", Icons.Default.Attractions, "Attractions"),
+                IconEntry("museum",     R.drawable.ic_maki_museum,     "Museum"),
+                IconEntry("library",    R.drawable.ic_maki_library,    "Library"),
+                IconEntry("cinema",     R.drawable.ic_maki_cinema,     "Cinema"),
+                IconEntry("theatre",    R.drawable.ic_maki_theatre,    "Theatre"),
+                IconEntry("music",      R.drawable.ic_maki_music,      "Music"),
+                IconEntry("gaming",     R.drawable.ic_maki_gaming,     "Gaming / Casino"),
+                IconEntry("zoo",        R.drawable.ic_maki_zoo,        "Zoo / Aquarium"),
+                IconEntry("art-gallery",R.drawable.ic_maki_art_gallery,"Gallery"),
+                IconEntry("attraction", R.drawable.ic_maki_attraction, "Attraction"),
+                IconEntry("stadium",    R.drawable.ic_maki_stadium,    "Stadium"),
             )
         ),
         IconCategory(
-            "Heritage & Religion", listOf(
-                IconEntry("castle", Icons.Default.Castle, "Castle"),
-                IconEntry("sensor_door", Icons.Default.SensorDoor, "Gate"),
-                IconEntry("architecture", Icons.Default.Architecture, "Ruins"),
-                IconEntry("foundation", Icons.Default.Foundation, "Archaeological"),
-                IconEntry("villa", Icons.Default.Villa, "Manor"),
-                IconEntry("history_edu", Icons.Default.HistoryEdu, "Historical"),
-                IconEntry("church", Icons.Default.Church, "Church"),
-                IconEntry("mosque", Icons.Default.Mosque, "Mosque"),
-                IconEntry("synagogue", Icons.Default.Synagogue, "Synagogue"),
-                IconEntry("temple_hindu", Icons.Default.TempleHindu, "Temple"),
-                IconEntry("temple_buddhist", Icons.Default.TempleBuddhist, "Buddhist Temple"),
-                IconEntry("local_cemetery", Icons.Default.Fence, "Cemetery"),
-                IconEntry("military_tech", Icons.Default.MilitaryTech, "Military"),
-                IconEntry("local_post_office", Icons.Default.LocalPostOffice, "Post Office"),
+            "Activities", listOf(
+                IconEntry("viewpoint",      R.drawable.ic_maki_viewpoint,      "Viewpoint"),
+                IconEntry("swimming",       R.drawable.ic_maki_swimming,       "Swimming"),
+                IconEntry("skiing",         R.drawable.ic_maki_skiing,         "Skiing"),
+                IconEntry("golf",           R.drawable.ic_maki_golf,           "Golf"),
+                IconEntry("tennis",         R.drawable.ic_maki_tennis,         "Tennis"),
+                IconEntry("fitness-centre", R.drawable.ic_maki_fitness_centre, "Gym"),
+                IconEntry("horse-riding",   R.drawable.ic_maki_horse_riding,   "Horse Riding"),
+                IconEntry("dog-park",       R.drawable.ic_maki_dog_park,       "Dog Park"),
+                IconEntry("picnic-site",    R.drawable.ic_maki_picnic_site,    "Picnic"),
+                IconEntry("farm",           R.drawable.ic_maki_farm,           "Farm / Vineyard"),
+                IconEntry("observation-tower", R.drawable.ic_maki_observation_tower, "Tower"),
             )
         ),
         IconCategory(
             "Markers", listOf(
-                IconEntry("star", Icons.Default.Star, "Star"),
-                IconEntry("favorite", Icons.Default.Favorite, "Favorite"),
-                IconEntry("bookmark", Icons.Default.Bookmark, "Bookmark"),
-                IconEntry("label", Icons.AutoMirrored.Filled.Label, "Label"),
-                IconEntry("warning", Icons.Default.Warning, "Warning"),
-                IconEntry("crisis_alert", Icons.Default.CrisisAlert, "Danger"),
-                IconEntry("info", Icons.Default.Info, "Info"),
-                IconEntry("emergency", Icons.Default.Emergency, "Emergency"),
-                IconEntry("whatshot", Icons.Default.Whatshot, "Hot"),
-                IconEntry("bolt", Icons.Default.Bolt, "Bolt"),
-                IconEntry("visibility", Icons.Default.Visibility, "Visible"),
-                IconEntry("work", Icons.Default.Work, "Work"),
-                IconEntry("business_center", Icons.Default.BusinessCenter, "Business"),
+                IconEntry("marker",  R.drawable.ic_maki_marker,  "Marker"),
+                IconEntry("circle",  R.drawable.ic_maki_circle,  "Circle"),
+                IconEntry("village", R.drawable.ic_maki_village, "Village"),
+                IconEntry("town",    R.drawable.ic_maki_town,    "Town"),
+                IconEntry("danger",  R.drawable.ic_maki_danger,  "Danger"),
+                IconEntry("caution", R.drawable.ic_maki_caution, "Caution"),
             )
         ),
     )
 
-    private val allIcons: Map<String, ImageVector> by lazy {
-        categories.flatMap { it.icons }.associate { it.key to it.vector }
+    private val allByKey: Map<String, Int> by lazy {
+        categories.flatMap { it.icons }.associate { it.key to it.res }
     }
 
-    fun iconVector(key: String): ImageVector = allIcons[key] ?: Icons.Default.Place
+    @DrawableRes
+    fun iconRes(key: String?): Int = allByKey[key] ?: R.drawable.ic_maki_marker
 }
