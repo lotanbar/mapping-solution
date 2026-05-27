@@ -18,7 +18,7 @@ import javax.inject.Inject
 data class GroupFormState(
     val name: String = "",
     val description: String = "",
-    val iconKey: String = "place",
+    val iconKey: String = "marker",
     val color: String = "#FF2196F3",
     val shape: String = "pin",
     val type: GroupType = GroupType.POI,

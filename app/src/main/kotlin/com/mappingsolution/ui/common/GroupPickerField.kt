@@ -20,6 +20,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.size
 import com.mappingsolution.data.model.Group
+import androidx.compose.ui.res.painterResource
+import com.mappingsolution.ui.common.IconCatalog
 
 /**
  * Shared group picker dropdown used in POI and route forms.
@@ -55,7 +57,7 @@ fun GroupPickerField(
             leadingIcon = selectedGroup?.let { group ->
                 {
                     Icon(
-                        imageVector = IconCatalog.iconVector(group.iconKey),
+                        painter = painterResource(IconCatalog.iconRes(group.iconKey)),
                         contentDescription = null,
                         tint = group.parsedColor(),
                         modifier = Modifier.size(24.dp),
@@ -83,7 +85,7 @@ fun GroupPickerField(
                 DropdownMenuItem(
                     leadingIcon = {
                         Icon(
-                            imageVector = IconCatalog.iconVector(group.iconKey),
+                            painter = painterResource(IconCatalog.iconRes(group.iconKey)),
                             contentDescription = null,
                             tint = group.parsedColor(),
                             modifier = Modifier.size(24.dp),

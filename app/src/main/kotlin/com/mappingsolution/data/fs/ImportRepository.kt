@@ -636,7 +636,7 @@ class ImportRepository @Inject constructor(
                                     mediaPaths = wptImages.toList(),
                                     iconKey = com.mappingsolution.data.places.PoiIconResolver
                                         .resolveForImported(wptType, wptName, wptDesc ?: "")
-                                        .takeIf { it != "place" },
+                                        .takeIf { it != "marker" },
                                     createdAt = wptTime ?: System.currentTimeMillis(),
                                     updatedAt = System.currentTimeMillis(),
                                 )

@@ -449,7 +449,7 @@ fun AppNavGraph() {
 
         composable(ROUTE_ICON_PICKER) {
             val formEntry = navController.previousBackStackEntry
-            val currentIcon = formEntry?.savedStateHandle?.get<String>(KEY_CURRENT_ICON) ?: "place"
+            val currentIcon = formEntry?.savedStateHandle?.get<String>(KEY_CURRENT_ICON) ?: "marker"
             IconPickerScreen(
                 currentIconKey = currentIcon,
                 onIconSelected = { key ->

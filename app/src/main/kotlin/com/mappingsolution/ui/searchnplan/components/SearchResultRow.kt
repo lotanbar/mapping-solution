@@ -12,17 +12,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mappingsolution.data.model.SearchResult
@@ -68,7 +66,7 @@ fun SearchResultRow(
             Spacer(Modifier.width(8.dp))
 
             Icon(
-                imageVector = resolveIcon(result.poi.iconKey),
+                painter = painterResource(IconCatalog.iconRes(result.poi.iconKey)),
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
             )
@@ -106,9 +104,3 @@ fun SearchResultRow(
         }
     }
 }
-
-private val iconMap: Map<String, ImageVector> by lazy {
-    IconCatalog.categories.flatMap { it.icons }.associate { it.key to it.vector }
-}
-
-private fun resolveIcon(key: String?): ImageVector = iconMap[key] ?: Icons.Default.Place

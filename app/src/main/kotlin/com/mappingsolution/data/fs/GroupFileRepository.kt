@@ -79,7 +79,7 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
         val default = Group(
             name = "Personal POIs",
             description = "My personal points of interest",
-            iconKey = "place",
+            iconKey = "marker",
             color = "#FF2196F3",
         )
         insertRaw(default)
@@ -94,7 +94,7 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
                     id = GOOGLE_PLACES_GROUP_ID,
                     name = "Google Places",
                     description = "Nearby businesses from Google",
-                    iconKey = "place",
+                    iconKey = "marker",
                     color = "#FF4285F4",
                     isImported = true,
                 )
@@ -107,7 +107,7 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
                     id = OSM_POI_GROUP_ID,
                     name = "OpenStreetMap POIs",
                     description = "Natural & historic landmarks from OSM",
-                    iconKey = "terrain",
+                    iconKey = "mountain",
                     color = "#FF4CAF50",
                     isImported = true,
                 )
@@ -174,9 +174,9 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
         val usedColors = _groups.value.map { it.color }.toSet()
 
         val candidateIcons = listOf(
-            "flag", "tour", "explore", "map", "navigation", "push_pin",
-            "place", "near_me", "gps_fixed", "travel_explore", "satellite",
-            "location_city", "park", "terrain", "forest", "landscape",
+            "marker", "information", "viewpoint", "attraction", "park",
+            "mountain", "campsite", "lodging", "museum", "library",
+            "stadium", "farm", "village", "town", "harbor",
         )
         val candidateColors = listOf(
             "#FF4CAF50", "#FFFF9800", "#FF9C27B0", "#FF00BCD4",
@@ -185,7 +185,7 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
             "#FFCDDC39", "#FF00E5FF", "#FFFF4081", "#FF69F0AE",
         )
 
-        val iconKey = candidateIcons.firstOrNull { it !in usedIcons } ?: "place"
+        val iconKey = candidateIcons.firstOrNull { it !in usedIcons } ?: "marker"
         val color = candidateColors.firstOrNull { it !in usedColors } ?: "#FF4CAF50"
 
         val group = Group(name = trimmed, iconKey = iconKey, color = color, shape = "square", isImported = true, isBulk = true, importComplete = false)
@@ -223,9 +223,9 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
         val usedColors = _groups.value.map { it.color }.toSet()
 
         val candidateIcons = listOf(
-            "flag", "tour", "explore", "map", "navigation", "push_pin",
-            "place", "near_me", "gps_fixed", "travel_explore", "satellite",
-            "location_city", "park", "terrain", "forest", "landscape",
+            "marker", "information", "viewpoint", "attraction", "park",
+            "mountain", "campsite", "lodging", "museum", "library",
+            "stadium", "farm", "village", "town", "harbor",
         )
         val candidateColors = listOf(
             "#FF4CAF50", "#FFFF9800", "#FF9C27B0", "#FF00BCD4",
@@ -234,7 +234,7 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
             "#FFCDDC39", "#FF00E5FF", "#FFFF4081", "#FF69F0AE",
         )
 
-        val iconKey = candidateIcons.firstOrNull { it !in usedIcons } ?: "place"
+        val iconKey = candidateIcons.firstOrNull { it !in usedIcons } ?: "marker"
         val color = candidateColors.firstOrNull { it !in usedColors } ?: "#FF4CAF50"
 
         val group = Group(name = trimmed, iconKey = iconKey, color = color, isImported = true)

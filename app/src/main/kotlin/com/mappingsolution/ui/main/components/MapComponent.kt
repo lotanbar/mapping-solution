@@ -15,7 +15,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.painter.Painter
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -116,8 +116,8 @@ private fun createPoiCircle(
     val bitmap = createCircleIcon(iconKey, size = size)
     val androidCanvas = android.graphics.Canvas(bitmap)
 
-    // "place" is a teardrop pin shape — draw a white dot instead for a clean look
-    if (iconKey == "place") {
+    // "marker" is a teardrop pin shape — draw a white dot instead for a clean look
+    if (iconKey == "marker") {
         val dotPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.WHITE
             style = android.graphics.Paint.Style.FILL
@@ -155,7 +155,7 @@ private fun createPoiSquare(
     val bitmap = createSquareIcon(iconKey, size = size)
     val androidCanvas = android.graphics.Canvas(bitmap)
 
-    if (iconKey == "place") {
+    if (iconKey == "marker") {
         val dotPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.WHITE
             style = android.graphics.Paint.Style.FILL
@@ -193,7 +193,7 @@ private fun createPoiHexagon(
     val bitmap = createHexagonIcon(iconKey, size = size)
     val androidCanvas = android.graphics.Canvas(bitmap)
 
-    if (iconKey == "place") {
+    if (iconKey == "marker") {
         val dotPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.WHITE
             style = android.graphics.Paint.Style.FILL
@@ -274,8 +274,8 @@ fun MapComponent(
 
     // Pre-create painters for ALL catalog icons (fixed set — composable safe)
     val allIconKeys = remember { IconCatalog.categories.flatMap { it.icons }.map { it.key } }
-    val allPainters = allIconKeys.associateWith { rememberVectorPainter(IconCatalog.iconVector(it)) }
-    val placePainterFallback = allPainters["place"] ?: rememberVectorPainter(IconCatalog.iconVector("place"))
+    val allPainters = allIconKeys.associateWith { painterResource(IconCatalog.iconRes(it)) }
+    val placePainterFallback = allPainters["marker"] ?: painterResource(IconCatalog.iconRes("marker"))
 
     // Painters for group icons (subset of allPainters, kept for groupBitmaps)
     val painters = allPainters
@@ -605,7 +605,7 @@ fun MapComponent(
             return@LaunchedEffect
         }
         val features = googlePlaces.map { poi ->
-            val iconId = "pin-google-${poi.iconKey ?: "place"}"
+            val iconId = "pin-google-${poi.iconKey ?: "marker"}"
             android.util.Log.d("MapComponent", "  googlePoi: ${poi.name} iconId=$iconId lat=${poi.lat} lng=${poi.lng}")
             Feature.fromGeometry(
                 Point.fromLngLat(poi.lng, poi.lat),
@@ -634,7 +634,7 @@ fun MapComponent(
         val style = map.style ?: return@LaunchedEffect
         val source = style.getSource("osm-poi-source") as? GeoJsonSource ?: return@LaunchedEffect
         val features = osmPois.map { poi ->
-            val iconId = "pin-osm-${poi.iconKey ?: "place"}"
+            val iconId = "pin-osm-${poi.iconKey ?: "marker"}"
             Feature.fromGeometry(
                 Point.fromLngLat(poi.lng, poi.lat),
                 null,
@@ -674,7 +674,7 @@ fun MapComponent(
             // Register one square bitmap per unique icon key (keyed by individual POI icon)
             val registered = mutableSetOf<String>()
             bulkPois.forEach { poi ->
-                val resolvedIcon = poi.iconKey?.takeIf { it.isNotBlank() } ?: "place"
+                val resolvedIcon = poi.iconKey?.takeIf { it.isNotBlank() } ?: "marker"
                 val bitmapKey = "pin-bulk-$resolvedIcon"
                 if (registered.add(bitmapKey)) {
                     val painter = allPainters[resolvedIcon] ?: placePainterFallback
@@ -683,7 +683,7 @@ fun MapComponent(
             }
 
             val features = bulkPois.map { poi ->
-                val resolvedIcon = poi.iconKey?.takeIf { it.isNotBlank() } ?: "place"
+                val resolvedIcon = poi.iconKey?.takeIf { it.isNotBlank() } ?: "marker"
                 val iconId = "pin-bulk-$resolvedIcon"
                 Feature.fromGeometry(
                     Point.fromLngLat(poi.lng, poi.lat),

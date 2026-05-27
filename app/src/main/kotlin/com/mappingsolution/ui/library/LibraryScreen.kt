@@ -61,6 +61,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -1449,7 +1450,7 @@ private fun GroupPickerDialog(
                                         .drawBehind { drawCircle(parseHexColor(group.color)) },
                                 ) {
                                     Icon(
-                                        imageVector = IconCatalog.iconVector(group.iconKey),
+                                        painter = painterResource(IconCatalog.iconRes(group.iconKey)),
                                         contentDescription = null,
                                         tint = Color.White,
                                         modifier = Modifier.size(18.dp),
