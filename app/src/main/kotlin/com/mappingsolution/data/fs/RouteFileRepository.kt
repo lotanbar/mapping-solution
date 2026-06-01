@@ -141,6 +141,32 @@ class RouteFileRepository @Inject constructor(private val storageManager: Storag
         }
     }
 
+    /**
+     * Atomically replaces the entire points file with [points].
+     *
+     * Writes to a sibling `.tmp` file first, then renames it over the target so a crash
+     * or power loss during the write cannot corrupt the existing data.
+     */
+    suspend fun replacePoints(routeId: String, points: List<RoutePoint>) = withContext(Dispatchers.IO) {
+        if (points.isEmpty()) return@withContext
+        val route = _routes.value.find { it.id == routeId } ?: return@withContext
+        val target = storageManager.getRecordingPointsFile(route.name, routeId)
+        val tmp = File(target.parent, "${target.name}.tmp")
+        try {
+            FileWriter(tmp, false).use { writer ->
+                for (pt in points) {
+                    writer.write("""{"ts":${pt.ts},"lat":${pt.lat},"lng":${pt.lng}}""")
+                    writer.write("\n")
+                }
+            }
+            // On Linux/Android this rename is atomic within the same filesystem.
+            tmp.renameTo(target)
+        } catch (e: Exception) {
+            tmp.delete()
+            throw e
+        }
+    }
+
     suspend fun getPoints(routeId: String): List<RoutePoint> = withContext(Dispatchers.IO) {
         val route = _routes.value.find { it.id == routeId } ?: return@withContext emptyList()
         val file = storageManager.getRecordingPointsFile(route.name, routeId)

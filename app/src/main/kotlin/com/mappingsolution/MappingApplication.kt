@@ -13,6 +13,7 @@ import okhttp3.Interceptor
 import com.mappingsolution.data.image.ZipImageFetcher
 import com.mappingsolution.data.map.MbTilesInterceptor
 import com.mappingsolution.data.migration.LegacyDbMigration
+import com.mappingsolution.data.migration.StorageV2Migration
 import com.mappingsolution.data.util.StorageManager
 import com.mappingsolution.service.ImportWorker
 import com.mappingsolution.service.MbtilesImportWorker
@@ -76,6 +77,14 @@ class MappingApplication : Application(), Configuration.Provider {
             runBlocking(Dispatchers.IO) {
                 LegacyDbMigration(this@MappingApplication, storageManager).run()
                 marker.createNewFile()
+            }
+        }
+
+        val v2Marker = File(storageManager.rootDir, ".storage_v2")
+        if (!v2Marker.exists()) {
+            runBlocking(Dispatchers.IO) {
+                StorageV2Migration(this@MappingApplication, storageManager).run()
+                v2Marker.createNewFile()
             }
         }
 

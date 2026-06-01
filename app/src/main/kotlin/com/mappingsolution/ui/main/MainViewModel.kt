@@ -21,7 +21,10 @@ import com.mappingsolution.data.places.NEARBY_POI_MIN_ZOOM
 import com.mappingsolution.data.places.OSM_FETCH_DEBOUNCE_MS
 import com.mappingsolution.data.places.OsmPoiRepository
 import com.mappingsolution.data.prefs.ViewportPreference
+import com.mappingsolution.data.recording.processing.OsmRoadCache
 import dagger.hilt.android.lifecycle.HiltViewModel
+import org.maplibre.geojson.Feature
+import org.maplibre.geojson.FeatureCollection
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -48,6 +51,7 @@ class MainViewModel @Inject constructor(
     val bulkPoiRepository: BulkPoiRepository,
     private val mapLayersState: MapLayersState,
     private val searchPreviewState: SearchPreviewState,
+    val osmRoadCache: OsmRoadCache,
 ) : ViewModel() {
 
     val groups: StateFlow<List<Group>> = groupRepository.observeAll()
@@ -58,6 +62,10 @@ class MainViewModel @Inject constructor(
 
     val routes: StateFlow<List<Route>> = routeRepository.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** OSM road geometry for the current map area — drives the road overlay layer. */
+    val osmRoadsGeoJson: StateFlow<FeatureCollection> = osmRoadCache.roadsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FeatureCollection.fromFeatures(emptyList<Feature>()))
 
     /** Routes that were not properly stopped (app killed / battery died during recording). */
     val incompleteRoutes: StateFlow<List<Route>> = routeRepository.observeAll()

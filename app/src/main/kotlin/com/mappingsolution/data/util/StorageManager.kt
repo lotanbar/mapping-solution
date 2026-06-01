@@ -30,15 +30,58 @@ class StorageManager @Inject constructor(
     fun sanitizeName(name: String): String =
         name.replace(Regex("""[/\\:*?"<>|]"""), "_").trim()
 
-    // ── Groups — filename is the group name (unique by dedup) ────────────────
+    // ── Groups — only user-created groups; folder is "{sanitized-name}_{first8ofId}" ──
     fun getGroupsDir(): File = File(rootDir, "groups").also { it.mkdirs() }
-    fun getGroupFile(groupName: String): File = File(getGroupsDir(), "${sanitizeName(groupName)}.json")
+    fun groupFolderName(name: String, id: String): String = "${sanitizeName(name)}_${id.take(8)}"
+    fun getGroupDir(name: String, id: String): File = File(getGroupsDir(), groupFolderName(name, id)).also { it.mkdirs() }
+    fun getGroupFile(name: String, id: String): File = File(getGroupDir(name, id), "group.json")
 
-    // ── POIs — folder is "{sanitized-name}_{first8ofId}", media flat inside ──
+    /**
+     * Finds a user-group directory by its full UUID.
+     * Scans the (small) groups dir by name suffix, then verifies via group.json to avoid collisions.
+     */
+    fun findGroupDirById(groupId: String): File? {
+        val suffix = "_${groupId.take(8)}"
+        val candidate = getGroupsDir().listFiles()?.firstOrNull {
+            it.isDirectory && it.name.endsWith(suffix)
+        } ?: return null
+        return try {
+            val json = org.json.JSONObject(File(candidate, "group.json").readText())
+            if (json.optString("id") == groupId) candidate else null
+        } catch (_: Exception) { null }
+    }
+
+    fun deleteGroupDir(name: String, id: String): Boolean =
+        File(getGroupsDir(), groupFolderName(name, id)).deleteRecursively()
+
+    fun renameGroupDir(oldName: String, newName: String, id: String) {
+        val oldDir = File(getGroupsDir(), groupFolderName(oldName, id))
+        val newDir = File(getGroupsDir(), groupFolderName(newName, id))
+        if (oldDir.exists() && oldDir.canonicalPath != newDir.canonicalPath) {
+            if (oldDir.renameTo(newDir)) {
+                if (oldDir.exists()) oldDir.deleteRecursively()
+            }
+        }
+    }
+
+    // ── POIs — folder is "{sanitized-name}_{first8ofId}" nested inside the group dir ──
     fun getPoisDir(): File = File(rootDir, "pois").also { it.mkdirs() }
     fun poiFolderName(name: String, id: String): String = "${sanitizeName(name)}_${id.take(8)}"
-    fun getPoiDir(name: String, id: String): File = File(getPoisDir(), poiFolderName(name, id)).also { it.mkdirs() }
-    fun getPoiFile(name: String, id: String): File = File(getPoiDir(name, id), "poi.json")
+
+    /**
+     * Returns the directory for a user POI, nested inside its group folder.
+     * If [groupId] is null the POI is orphaned and falls back to pois/orphans/.
+     */
+    fun getPoiDir(name: String, id: String, groupId: String?): File {
+        val base = if (groupId != null) {
+            findGroupDirById(groupId) ?: File(getGroupsDir(), "unknown_${groupId.take(8)}")
+        } else {
+            File(getPoisDir(), "orphans").also { it.mkdirs() }
+        }
+        return File(base, poiFolderName(name, id)).also { it.mkdirs() }
+    }
+
+    fun getPoiFile(name: String, id: String, groupId: String?): File = File(getPoiDir(name, id, groupId), "poi.json")
 
     /**
      * Directory for a POI's media files (images, etc.).
@@ -56,31 +99,66 @@ class StorageManager @Inject constructor(
         File(mediaRootDir, "import_zips/${sanitizeName(groupName)}_${groupId.take(8)}.zip")
             .also { it.parentFile?.mkdirs() }
 
-    // ── Bulk imported POIs — one folder per group ─────────────────────────
+    // ── Bulk imported POIs — one folder per group in pois/ ─────────────────────────
     /** The JSONL file holding all POIs for a bulk-imported group (one JSON object per line). */
     fun getBulkPoisFile(name: String, id: String): File = File(getPoiDir(name, id), "bulk_pois.jsonl")
 
+    /** Manifest file for a bulk-imported group — stores group metadata alongside its JSONL. */
+    fun getBulkManifestFile(name: String, id: String): File = File(getPoiDir(name, id), "manifest.json")
+
+    /** Returns the raw bulk-import POI dir (under pois/, not groups/). */
+    private fun getPoiDir(name: String, id: String): File = File(getPoisDir(), poiFolderName(name, id)).also { it.mkdirs() }
+
     fun deletePoiFolder(name: String, id: String): Boolean {
         File(getPoisDir(), poiFolderName(name, id)).deleteRecursively()
-        // Also remove the media dir and any zip in private storage
         File(mediaRootDir, "pois/${poiFolderName(name, id)}").deleteRecursively()
         File(mediaRootDir, "import_zips/${sanitizeName(name)}_${id.take(8)}.zip").delete()
         return true
     }
-    fun renamePoiFolder(oldName: String, newName: String, id: String) {
-        val oldDir = File(getPoisDir(), poiFolderName(oldName, id))
-        val newDir = File(getPoisDir(), poiFolderName(newName, id))
+
+    fun deletePoiFolder(name: String, id: String, groupId: String?) {
+        getPoiDir(name, id, groupId).deleteRecursively()
+        File(mediaRootDir, "pois/${poiFolderName(name, id)}").deleteRecursively()
+    }
+
+    /**
+     * Moves a POI folder when its name or group changes.
+     * Handles all cases: rename-only, group-move-only, or both simultaneously.
+     * Media dir (in mediaRootDir) is renamed by POI name/id only (not group-scoped).
+     */
+    fun movePoiFolder(
+        oldName: String, newName: String,
+        poiId: String,
+        oldGroupId: String?, newGroupId: String?,
+    ) {
+        val oldBase = if (oldGroupId != null) {
+            findGroupDirById(oldGroupId) ?: File(getGroupsDir(), "unknown_${oldGroupId.take(8)}")
+        } else {
+            File(getPoisDir(), "orphans")
+        }
+        val newBase = if (newGroupId != null) {
+            findGroupDirById(newGroupId) ?: File(getGroupsDir(), "unknown_${newGroupId.take(8)}")
+        } else {
+            File(getPoisDir(), "orphans").also { it.mkdirs() }
+        }
+        val oldDir = File(oldBase, poiFolderName(oldName, poiId))
+        val newDir = File(newBase, poiFolderName(newName, poiId))
         if (oldDir.exists() && oldDir.canonicalPath != newDir.canonicalPath) {
-            if (oldDir.renameTo(newDir)) {
-                if (oldDir.exists()) oldDir.deleteRecursively()
+            newDir.parentFile?.mkdirs()
+            if (!oldDir.renameTo(newDir)) {
+                oldDir.copyRecursively(newDir, overwrite = true)
+                oldDir.deleteRecursively()
             }
         }
-        // Also rename the media dir in private storage
-        val oldMedia = File(mediaRootDir, "pois/${poiFolderName(oldName, id)}")
-        val newMedia = File(mediaRootDir, "pois/${poiFolderName(newName, id)}")
-        if (oldMedia.exists() && oldMedia.canonicalPath != newMedia.canonicalPath) {
-            if (oldMedia.renameTo(newMedia)) {
-                if (oldMedia.exists()) oldMedia.deleteRecursively()
+        // Rename media dir if POI name changed
+        if (oldName != newName) {
+            val oldMedia = File(mediaRootDir, "pois/${poiFolderName(oldName, poiId)}")
+            val newMedia = File(mediaRootDir, "pois/${poiFolderName(newName, poiId)}")
+            if (oldMedia.exists() && oldMedia.canonicalPath != newMedia.canonicalPath) {
+                if (!oldMedia.renameTo(newMedia)) {
+                    oldMedia.copyRecursively(newMedia, overwrite = true)
+                    oldMedia.deleteRecursively()
+                }
             }
         }
     }

@@ -1,5 +1,6 @@
 package com.mappingsolution.data.recording
 
+import com.mappingsolution.data.recording.processing.TrackSmoother
 import com.mappingsolution.data.fs.RouteFileRepository
 import com.mappingsolution.data.model.Route
 import com.mappingsolution.data.model.RoutePoint
@@ -90,6 +91,21 @@ class RecordingRepository @Inject constructor(
      */
     suspend fun awaitPendingWrites() {
         scope.async { }.await()
+    }
+
+    /**
+     * Applies a gentle, gap-aware, curvature-aware smoothing pass to the stored points,
+     * replacing the file atomically.  Called after [awaitPendingWrites] so all in-flight
+     * writes are guaranteed to have landed before we read and rewrite.
+     *
+     * Only straight / gradual segments are smoothed; turns, intersections, and stationary
+     * suppression gaps are left untouched.  Timestamps and accumulated distance are unchanged.
+     */
+    suspend fun smoothTrack(routeId: String) {
+        val points = routeFileRepository.getPoints(routeId)
+        if (points.size < 3) return
+        val smoothed = TrackSmoother.smooth(points)
+        routeFileRepository.replacePoints(routeId, smoothed)
     }
 
     suspend fun finalizeStop(routeId: String, distanceMeters: Double, durationSec: Long) {

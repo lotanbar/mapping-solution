@@ -1,0 +1,80 @@
+MIGRATE TO OSM + IMPLEMENT BACKGROUND ROAD SNAPPING
+=====================================================
+Project: MappingSolution (Android, Kotlin)
+Repo: /home/lotan/Downloads/MappingSolution
+Date: 2026-06-01
+
+
+=== THE PROBLEM ===
+
+The app records GPS routes and snaps points to roads for a clean track.
+The current road snapper (RoadSnapper.kt) uses MapLibre's queryRenderedFeatures().
+This is a UI rendering API — it only works when the map is on screen.
+Screen off = no rendering = no snapping = raw noisy GPS in the track.
+This is the root cause of remaining noise in recordings.
+
+Additionally, MapTiler vector/hybrid tiles filter out many minor roads,
+so the user sees less road detail than OSM actually contains.
+
+
+=== CURRENT ARCHITECTURE ===
+
+- MapTiler vector/hybrid tiles   → visual map (roads, labels, satellite)
+- queryRenderedFeatures()        → road snapping (broken: screen-off = fails)
+
+
+=== NEW ARCHITECTURE ===
+
+Two fully independent fetch pipelines:
+
+1. OSM Overpass Pipeline (always running)
+   - Fetches raw road geometry for the current area (bounding box)
+   - Re-fetches as user location changes
+   - Cached in memory (OsmRoadCache)
+   - When screen ON:  roads and name labels are rendered as a GeoJSON layer on the map
+   - When screen OFF: same cache, same code path — just no rendering needed
+   - Used for ALL snapping decisions, always
+
+2. MapTiler Pipeline (screen ON only)
+   - Fetches raster satellite tiles for the current area
+   - Rendered as the base background layer
+   - Re-fetches as user pans/zooms
+   - Not used when screen is off — raster imagery is not needed
+
+queryRenderedFeatures → RETIRED completely.
+MapTiler vector/hybrid tiles → RETIRED completely. Raster only.
+OSM is the sole source of road data for both display and snapping.
+
+
+=== ALREADY IMPLEMENTED (previous session) ===
+
+- MotionStateEstimator.kt      (NEW) — time-based stationary detection
+- TrackSmoother.kt             (NEW) — post-recording Gaussian smoother
+- GpsKalmanFilter.kt           (MOD) — speed-adaptive process noise
+- RoadSnapper.kt               (MOD) — speed-adaptive bearing penalty; takes speedMps
+- SmartTrackProcessor.kt       (MOD) — velocity-adaptive jump guard; snap off above 40 m/s
+- TrackModeManager.kt          (MOD) — ROAD_ENTER_COUNT bumped 2 → 3
+- RouteFileRepository.kt       (MOD) — atomic replacePoints() via .tmp rename
+- RecordingRepository.kt       (MOD) — smoothTrack() suspend function
+- RecordingService.kt          (MOD) — removed NETWORK_PROVIDER; MAX_SPEED_MPS 300;
+                                        uses MotionStateEstimator; threads speedMps;
+                                        calls smoothTrack() on stop
+
+Build is clean. APK installed on Pixel 6a.
+
+
+=== WHAT NEEDS TO BE DONE ===
+
+1. Build OsmRoadCache — fetch road geometry from Overpass for a bounding box,
+   tile-cache it, re-fetch as location changes. Handle rate limits and warm-up latency.
+
+2. Rewire RoadSnapper.kt to query OsmRoadCache instead of queryRenderedFeatures.
+
+3. Add MapLibre GeoJSON source + layers (line + symbol) to render OSM roads
+   and name labels on top of the raster base map. This replaces MapTiler vector layers.
+
+4. Remove MapTiler vector/hybrid tile usage entirely. Keep raster satellite only.
+
+5. Ensure the OSM pipeline starts as soon as the app has a location — not just
+   when recording begins. Pre-warm on recording start. Handle the brief window
+   before first fetch completes (grace period or defer first snap).

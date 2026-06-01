@@ -23,8 +23,10 @@ object DatabaseModule {
 
     @Provides
     @Singleton
-    fun provideGroupFileRepository(storageManager: StorageManager): GroupFileRepository =
-        GroupFileRepository(storageManager)
+    fun provideGroupFileRepository(
+        @ApplicationContext context: Context,
+        storageManager: StorageManager,
+    ): GroupFileRepository = GroupFileRepository(context, storageManager)
 
     @Provides
     @Singleton

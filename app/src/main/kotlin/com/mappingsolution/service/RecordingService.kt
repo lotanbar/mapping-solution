@@ -17,11 +17,13 @@ import android.os.Looper
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.mappingsolution.MainActivity
-import com.mappingsolution.data.map.MapHolder
 import com.mappingsolution.data.recording.RecordingEvent
 import com.mappingsolution.data.recording.RecordingPoint
 import com.mappingsolution.data.recording.RecordingRepository
 import com.mappingsolution.data.recording.RecordingState
+import com.mappingsolution.data.recording.processing.MotionState
+import com.mappingsolution.data.recording.processing.MotionStateEstimator
+import com.mappingsolution.data.recording.processing.OsmRoadCache
 import com.mappingsolution.data.recording.processing.SmartTrackProcessor
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -42,7 +44,7 @@ class RecordingService : Service() {
 
     @Inject lateinit var recordingRepository: RecordingRepository
     @Inject lateinit var smartTrackProcessor: SmartTrackProcessor
-    @Inject lateinit var mapHolder: MapHolder
+    @Inject lateinit var osmRoadCache: OsmRoadCache
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var tickerJob: Job? = null
@@ -55,9 +57,7 @@ class RecordingService : Service() {
 
     // --- Motion-quality state ---
     private var recordingStartedAtMs = 0L
-    private val stationaryWindow = ArrayDeque<Location>(STATIONARY_WINDOW + 1)
-    private var isStationary = false
-    private var stationaryExitCount = 0
+    private val motionEstimator = MotionStateEstimator()
     private var postWarmupSettleCount = 0
 
     private val locationListener = object : LocationListener {
@@ -97,18 +97,12 @@ class RecordingService : Service() {
         /** Discard all fixes for this long after recording starts, giving the GPS chip time to lock. */
         private const val WARMUP_DURATION_MS = 15_000L
 
-        /** Reject a fix if it implies faster-than-this travel from the previous accepted fix. */
-        private const val MAX_SPEED_MPS = 41.7  // 150 km/h — allows all road speeds, catches GPS teleports
-
         /**
-         * Stationary detection: if this many consecutive accepted fixes are all within
-         * [STATIONARY_RADIUS_METERS] of the oldest one in the window, the user is considered
-         * stopped and new points are suppressed.
+         * Reject a fix if it implies faster-than-this travel from the previous accepted fix.
+         * Set high enough for commercial aviation (~250 m/s) while still catching GPS teleports
+         * caused by bad fixes or provider switches.
          */
-        private const val STATIONARY_WINDOW = 5
-        private const val STATIONARY_RADIUS_METERS = 8.0
-        /** Consecutive non-stationary fixes needed to resume recording after a stop. */
-        private const val STATIONARY_EXIT_COUNT = 2
+        private const val MAX_SPEED_MPS = 300.0  // 1 080 km/h
 
         /**
          * Fixes to discard immediately after the warmup window expires.
@@ -246,6 +240,9 @@ class RecordingService : Service() {
         // before finalizeStop renames the recording folder; otherwise in-flight writes
         // targeting the old path will fail silently and their points will be lost.
         recordingRepository.awaitPendingWrites()
+        // Apply post-recording smoothing: gentle 3-point Gaussian pass that is gap-aware
+        // and curvature-aware.  Works on the now-complete file; writes atomically.
+        runCatching { recordingRepository.smoothTrack(current.routeId) }
         val now = System.currentTimeMillis()
         val durationSec = current.elapsedMs(now) / 1000L
         recordingRepository.finalizeStop(current.routeId, current.distanceMeters, durationSec)
@@ -261,11 +258,15 @@ class RecordingService : Service() {
         val minDist = if (batterySaver) BATTERY_SAVER_MIN_DIST_M else NORMAL_MIN_DIST_M
 
         val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER).forEach { provider ->
-            runCatching {
-                if (lm.isProviderEnabled(provider)) {
-                    lm.requestLocationUpdates(provider, intervalMs, minDist, locationListener, Looper.getMainLooper())
-                }
+        // Only register GPS_PROVIDER: Network/WiFi positioning carries accuracy claims that
+        // pass the 50 m gate but can still be 100+ m off, injecting chaotic fixes into the
+        // pipeline.  The GPS chip alone gives sufficient quality and consistency.
+        runCatching {
+            if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                lm.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER, intervalMs, minDist,
+                    locationListener, Looper.getMainLooper()
+                )
             }
         }
 
@@ -298,19 +299,25 @@ class RecordingService : Service() {
             return
         }
 
+        val nowMs = System.currentTimeMillis()
+
+        // Pre-filter 3: motion-state gate (speed-based stationary detection).
+        // Evaluated before the min-movement positional dedup so every fix contributes
+        // to the speed estimate, regardless of whether it passes the position filter.
+        if (motionEstimator.update(location, nowMs) == MotionState.STATIONARY) return
+
         val last = lastLocation
         val rawDist = if (last != null)
             haversineMeters(last.latitude, last.longitude, location.latitude, location.longitude)
         else 0.0
 
-        // Pre-filter 3: reject micro-jitter based on raw GPS displacement
+        // Pre-filter 4: reject micro-jitter based on raw GPS displacement
         if (last != null && rawDist < MIN_MOVEMENT_METERS) return
 
-        // Pre-filter 4: reject physically impossible speed jumps.
+        // Pre-filter 5: reject physically impossible speed jumps.
         // Use actual wall-clock time between onNewLocation calls — NOT elapsedRealtimeNanos,
         // which can be stale (negative or inflated) for NETWORK provider fixes, silently
         // bypassing the check and allowing multi-km teleports through.
-        val nowMs = System.currentTimeMillis()
         if (last != null) {
             val dtSec = (nowMs - lastLocationAcceptedMs) / 1000.0
             if (dtSec > 0.0 && rawDist / dtSec > MAX_SPEED_MPS) return
@@ -319,33 +326,21 @@ class RecordingService : Service() {
         lastLocation = location
         lastLocationAcceptedMs = nowMs
 
-        // Pre-filter 5: stationary detection — suppress recording while the user is stopped
-        stationaryWindow.addLast(location)
-        if (stationaryWindow.size > STATIONARY_WINDOW) stationaryWindow.removeFirst()
-        if (stationaryWindow.size == STATIONARY_WINDOW) {
-            val anchor = stationaryWindow.first()
-            val allClose = stationaryWindow.all {
-                haversineMeters(anchor.latitude, anchor.longitude, it.latitude, it.longitude) <= STATIONARY_RADIUS_METERS
-            }
-            if (allClose) {
-                isStationary = true
-                stationaryExitCount = 0
-                return
-            }
-            if (isStationary) {
-                stationaryExitCount++
-                if (stationaryExitCount < STATIONARY_EXIT_COUNT) return
-                isStationary = false
-                stationaryExitCount = 0
-            }
-        } else if (isStationary) {
-            return
-        }
+        // Non-blocking: trigger OSM tile fetch for the current position if not cached.
+        osmRoadCache.ensureLoaded(location.latitude, location.longitude)
+
+        // Compute the best available speed estimate to thread through the pipeline.
+        // Prefer the GPS Doppler speed; fall back to displacement / elapsed time.
+        val speedMps: Float = motionEstimator.reliableSpeed(location)
+            ?: if (last != null && lastLocationAcceptedMs > 0L) {
+                val dtSec = (nowMs - lastLocationAcceptedMs).coerceAtLeast(1L) / 1000.0
+                (rawDist / dtSec).toFloat()
+            } else 0f
 
         scope.launch {
             // Run Kalman → road snap → mode hysteresis → spike detector on the captured location.
             // Returns null when the fix is being buffered (first fix) or was discarded.
-            val point = smartTrackProcessor.process(location, mapHolder.map) ?: return@launch
+            val point = smartTrackProcessor.process(location, speedMps) ?: return@launch
 
             // Accumulate distance from the last emitted (smoothed/snapped) point
             val prevEmit = lastEmittedPoint
@@ -388,10 +383,8 @@ class RecordingService : Service() {
     }
 
     private fun resetMotionState() {
-        stationaryWindow.clear()
-        isStationary = false
-        stationaryExitCount = 0
         postWarmupSettleCount = 0
+        motionEstimator.reset()
     }
 
     private fun startNotificationTicker() {

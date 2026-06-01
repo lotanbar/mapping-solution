@@ -101,6 +101,7 @@ fun MainScreen(
     val searchPreviewLocation by viewModel.searchPreviewLocation.collectAsState()
     val googleQuotaExhausted by viewModel.googlePlacesRepository.isQuotaExhausted.collectAsState()
     val isPoisLoading by viewModel.isPoisLoading.collectAsState()
+    val osmRoadsGeoJson by viewModel.osmRoadsGeoJson.collectAsState()
     var quotaToastMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(googleQuotaExhausted) {
@@ -145,8 +146,7 @@ fun MainScreen(
         onDispose { context.unregisterReceiver(receiver) }
     }
 
-    // When recording stops while the map is not visible (user navigated away mid-recording),
-    // onMapDisposed skipped unregister to keep road snapping alive. Clean it up now.
+    // Road snapping no longer requires the map to stay alive — remove the recording-state guard.
     LaunchedEffect(recordingState) {
         if (recordingState is RecordingState.Idle) {
             viewModel.mapHolder.unregisterIfNotVisible()
@@ -367,18 +367,13 @@ fun MainScreen(
                     hillshadeVisible = hillshadeVisible,
                     rasterLayers = rasterLayers,
                     baseMapVisible = baseMapVisible,
+                    osmRoadsGeoJson = osmRoadsGeoJson,
                     onCameraIdle = viewModel::saveCameraPosition,
                     onBoundsChanged = { north, south, east, west, lat, lng, zoom, bearing, tilt ->
                         viewModel.onCameraChanged(lat, lng, zoom, bearing, tilt, north, south, east, west)
                     },
                     onMapReady = { map -> viewModel.mapHolder.register(map) },
-                    // Keep the map reference alive while recording so road snapping keeps
-                    // working even if the user navigates away from the main screen.
-                    onMapDisposed = {
-                        if (recordingState !is RecordingState.Active) {
-                            viewModel.mapHolder.unregister()
-                        }
-                    },
+                    onMapDisposed = { viewModel.mapHolder.unregister() },
                     onDoubleTap = {
                         val hasPerm = ContextCompat.checkSelfPermission(
                             context, Manifest.permission.ACCESS_FINE_LOCATION

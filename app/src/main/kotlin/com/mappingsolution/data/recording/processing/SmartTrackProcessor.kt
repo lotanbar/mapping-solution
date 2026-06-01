@@ -2,9 +2,6 @@ package com.mappingsolution.data.recording.processing
 
 import android.location.Location
 import com.mappingsolution.data.recording.RecordingPoint
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import org.maplibre.android.maps.MapLibreMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.max
@@ -13,18 +10,23 @@ import kotlin.math.max
  * Orchestrates the full smart-track pipeline for each GPS fix:
  *
  *   Raw GPS fix
- *     → [GpsKalmanFilter]      — removes high-frequency noise; uses Location.accuracy as dynamic R
- *     → post-Kalman jump guard — discards fixes that land >120m from the previous processed position
- *     → [RoadSnapper]          — queries MapLibre tile data (already in memory) for road/path geometry
- *     → [TrackModeManager]     — hysteresis: require 2 consecutive snapped fixes before committing to road mode
- *     → spike detector         — buffers 1 fix of delay; if the previous fix jumped out and back
- *                                (ping-pong), it is replaced with a hold at the last stable position
- *     → emit [RecordingPoint]  — null means the fix was buffered/discarded; call [flushPending] on stop
+ *     → [GpsKalmanFilter]      — removes high-frequency noise; process noise scales with speed
+ *     → post-Kalman jump guard — discards fixes that land impossibly far from the previous
+ *                                processed position (threshold is velocity-adaptive)
+ *     → [RoadSnapper]          — uses OSM road geometry from [OsmRoadCache];
+ *                                disabled entirely above [HIGH_SPEED_SNAP_DISABLE_MPS]
+ *     → [TrackModeManager]     — hysteresis: require 3 consecutive snapped fixes before
+ *                                committing to road mode
+ *     → spike detector         — buffers 1 fix of delay; if the previous fix jumped out and
+ *                                back (ping-pong), it is replaced with a hold at the last
+ *                                stable position
+ *     → emit [RecordingPoint]  — null means the fix was buffered/discarded; call [flushPending]
+ *                                on stop
  *
  * Accuracy and min-movement pre-filters are applied upstream in [RecordingService].
  */
 @Singleton
-class SmartTrackProcessor @Inject constructor() {
+class SmartTrackProcessor @Inject constructor(private val osmRoadCache: OsmRoadCache) {
 
     private val kalmanFilter = GpsKalmanFilter()
     private val roadSnapper = RoadSnapper()
@@ -46,6 +48,14 @@ class SmartTrackProcessor @Inject constructor() {
     /** Last road-snap position accepted by the continuity guard. Null when off-road. */
     private var lastSnappedLatLng: Pair<Double, Double>? = null
 
+    /**
+     * High-speed road-snap disable state (hysteresis).
+     * Snap is disabled when speed exceeds [HIGH_SPEED_SNAP_DISABLE_MPS] and re-enabled
+     * only once speed drops below [HIGH_SPEED_SNAP_RESUME_MPS], preventing oscillation
+     * near the threshold.
+     */
+    private var snapDisabled = false
+
     /** Reset all stateful components. Call when a new recording is started. */
     fun reset() {
         kalmanFilter.reset()
@@ -54,6 +64,7 @@ class SmartTrackProcessor @Inject constructor() {
         pendingLatLng = null
         pendingTs = 0L
         lastSnappedLatLng = null
+        snapDisabled = false
     }
 
     /**
@@ -71,13 +82,14 @@ class SmartTrackProcessor @Inject constructor() {
     /**
      * Process one GPS fix through the full pipeline.
      *
+     * @param speedMps  Current speed estimate in m/s. Drives adaptive Kalman noise,
+     *                  bearing penalty scaling, jump guard sizing, and high-speed snap disable.
+     *
      * Returns a [RecordingPoint] to emit, or **null** if this fix was buffered or discarded.
      * Null means: do nothing this cycle; the position will appear on the next call (or at stop
      * via [flushPending]).
-     *
-     * Road snapping must run on the main thread (MapLibre rendering requirement).
      */
-    suspend fun process(location: Location, map: MapLibreMap?): RecordingPoint? {
+    suspend fun process(location: Location, speedMps: Float = 0f): RecordingPoint? {
         val accuracy = if (location.hasAccuracy()) location.accuracy else MAX_ACCURACY_FALLBACK
         val nowMs = System.currentTimeMillis()
 
@@ -86,16 +98,21 @@ class SmartTrackProcessor @Inject constructor() {
             lng = location.longitude,
             accuracyMeters = accuracy,
             timestampMs = nowMs,
+            speedMps = speedMps,
         )
 
-        // Post-Kalman jump guard: compare smoothed position against the PREVIOUS processed
-        // position (pendingLatLng, one fix ago) — not lastEmittedLatLng which is two fixes ago.
-        // If the Kalman state was poisoned by a bad upstream fix the smoothed output will still
-        // be close to the raw bad position; reset the filter and discard this fix.
+        // Velocity-adaptive post-Kalman jump guard.
+        // At low speed the guard stays at the base 120 m limit; at high speed it grows
+        // proportionally so legitimate movement at highway / aviation speeds is not discarded.
+        // Formula: max(BASE, speed × EXPECTED_INTERVAL_SEC × JUMP_SAFETY_FACTOR)
         val prevProcessed = pendingLatLng
         if (prevProcessed != null) {
+            val maxKalmanJump = maxOf(
+                MAX_POST_KALMAN_JUMP_BASE_METERS,
+                (speedMps * EXPECTED_GPS_INTERVAL_SEC * JUMP_SAFETY_FACTOR).toDouble()
+            )
             val smoothDist = haversineMeters(prevProcessed.first, prevProcessed.second, smoothLat, smoothLng)
-            if (smoothDist > MAX_POST_KALMAN_JUMP_METERS) {
+            if (smoothDist > maxKalmanJump) {
                 kalmanFilter.reset()
                 return null
             }
@@ -111,22 +128,28 @@ class SmartTrackProcessor @Inject constructor() {
             RoadSnapper.SNAP_RADIUS_METERS
         }
 
-        val rawSnapped: Pair<Double, Double>? = if (map != null) {
-            withContext(Dispatchers.Main) {
-                // Wrap in runCatching so any MapLibre rendering-thread assertion or
-                // null-style transient errors don't crash the recording session.
+        // High-speed snap disable with hysteresis:
+        //   enter disabled mode at HIGH_SPEED_SNAP_DISABLE_MPS (144 km/h)
+        //   re-enable only once speed drops below HIGH_SPEED_SNAP_RESUME_MPS (108 km/h)
+        if (speedMps > HIGH_SPEED_SNAP_DISABLE_MPS) snapDisabled = true
+        else if (speedMps < HIGH_SPEED_SNAP_RESUME_MPS) snapDisabled = false
+
+        val rawSnapped: Pair<Double, Double>? = if (!snapDisabled) {
+            val roads = osmRoadCache.getRoadsSync(smoothLat, smoothLng)
+            if (roads.isNotEmpty()) {
                 runCatching {
                     roadSnapper.snap(
                         smoothLat = smoothLat,
                         smoothLng = smoothLng,
-                        map = map,
+                        roads = roads,
+                        speedMps = speedMps,
                         travelBearingDeg = travelBearing,
                         previousLat = prevProcessed?.first,
                         previousLng = prevProcessed?.second,
                         maxAllowedJumpMeters = maxJumpMeters,
                     )
                 }.getOrNull()
-            }
+            } else null
         } else null
 
         // Snap continuity guard: reject snaps that jump much further than the GPS actually
@@ -161,17 +184,8 @@ class SmartTrackProcessor @Inject constructor() {
         val currentLatLng = finalLat to finalLng
 
         // ── Spike detector (1-fix delay) ──────────────────────────────────────────────────────
-        // We buffer the current position and emit the PREVIOUS one. Before emitting, we check
-        // if the previous position (B) is a ping-pong spike: it jumped far from the last stable
-        // emission (A) and the current position (C) came back near A.
-        //
-        //   Spike pattern: A──────B          A and C are close; B is a detour.
-        //                   ╲____╱ C              → hold at A, discard B.
-        //
-        // This catches moderate GPS bounces (20–100 m) that slip under the speed threshold.
         val toEmit: RecordingPoint?
         if (prevProcessed == null) {
-            // First fix ever — buffer it; nothing to emit yet.
             toEmit = null
         } else {
             val prevEmitted = lastEmittedLatLng
@@ -183,7 +197,6 @@ class SmartTrackProcessor @Inject constructor() {
                         dAC < maxOf(dAB, dBC) * SPIKE_RETURN_RATIO
             }
             if (isSpike) {
-                // Replace the spiked B with a hold at A (lastEmittedLatLng unchanged).
                 val held = prevEmitted!!
                 toEmit = RecordingPoint(ts = pendingTs, lat = held.first, lng = held.second)
             } else {
@@ -219,36 +232,43 @@ class SmartTrackProcessor @Inject constructor() {
         const val MIN_JUMP_FLOOR_METERS = 15.0
 
         /**
-         * Maximum plausible distance (metres) between consecutive processed positions after
-         * Kalman smoothing. Sized for 150 km/h × ~2.7 s average GPS interval = ~112 m.
-         * Fires when a bad fix poisons the Kalman state; the fix is discarded and Kalman reset.
+         * Base maximum plausible Kalman jump at zero speed (metres).
+         * Sized for 150 km/h × ~2.7 s average GPS interval = ~112 m.
+         * At higher speeds the limit grows proportionally via [JUMP_SAFETY_FACTOR].
          */
-        const val MAX_POST_KALMAN_JUMP_METERS = 120.0
+        const val MAX_POST_KALMAN_JUMP_BASE_METERS = 120.0
 
         /**
-         * Spike detector: minimum one-step displacement for a point to be considered a candidate
-         * spike. Jumps smaller than this are normal GPS noise and are ignored.
+         * Conservative expected GPS update interval used in the velocity-adaptive jump guard.
+         * Set to 3 s (between the 2 s normal and 5 s battery-saver intervals) so the guard
+         * is not too tight with a slightly delayed fix.
          */
+        const val EXPECTED_GPS_INTERVAL_SEC = 3.0f
+
+        /**
+         * Safety multiplier applied on top of expected movement distance.
+         * 2.0 means: allow up to 2× the expected distance at current speed before
+         * calling a fix a Kalman-poisoning teleport.
+         */
+        const val JUMP_SAFETY_FACTOR = 2.0f
+
+        /**
+         * Speed above which road snapping is disabled (m/s). 144 km/h.
+         * At this speed GPS is already accurate enough; snapping to tile geometry
+         * would introduce false corrections and map-tile loading can't keep up.
+         */
+        const val HIGH_SPEED_SNAP_DISABLE_MPS = 40.0f
+
+        /**
+         * Speed below which road snapping is re-enabled after being disabled (m/s). 108 km/h.
+         * Lower than [HIGH_SPEED_SNAP_DISABLE_MPS] to add hysteresis and prevent oscillation.
+         */
+        const val HIGH_SPEED_SNAP_RESUME_MPS = 30.0f
+
         const val SPIKE_MIN_METERS = 12.0
-
-        /**
-         * Spike detector: a point B is considered a spike when the direct distance A→C is less
-         * than this fraction of max(A→B, B→C). The lower the ratio, the stricter the detector
-         * (requires C to be very close to A for a spike to be declared).
-         *
-         * 0.45 means: C must be within 45% of the departure distance from A.
-         * Example: if A→B = 57 m, A→C must be < 26 m to flag as spike.
-         */
         const val SPIKE_RETURN_RATIO = 0.45
 
-        /**
-         * Snap continuity guard: a new snap is rejected if it jumps more than
-         * [SNAP_CONTINUITY_MULTIPLIER] × GPS movement from the last accepted snap position.
-         * Prevents oscillation between parallel road features (e.g. road vs. sidewalk).
-         */
         const val SNAP_CONTINUITY_MULTIPLIER = 2.0
-
-        /** Minimum floor for the snap continuity jump guard. */
         const val SNAP_CONTINUITY_FLOOR_METERS = 15.0
     }
 }

@@ -1,10 +1,13 @@
 package com.mappingsolution.data.fs
 
+import android.content.Context
+import android.content.SharedPreferences
 import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.GroupType
 import com.mappingsolution.data.places.GOOGLE_PLACES_GROUP_ID
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.data.util.StorageManager
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -26,7 +29,37 @@ sealed class DuplicateFieldError(message: String) : Exception(message) {
 }
 
 @Singleton
-class GroupFileRepository @Inject constructor(private val storageManager: StorageManager) {
+class GroupFileRepository @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val storageManager: StorageManager,
+) {
+
+    private val prefs: SharedPreferences by lazy {
+        context.getSharedPreferences("group_visibility", Context.MODE_PRIVATE)
+    }
+
+    // ── Hardcoded system groups (Google Places and OSM) ──────────────────────
+    // These are never written to the filesystem; visibility is stored in SharedPreferences.
+    private val systemGroups: List<Group> get() = listOf(
+        Group(
+            id = GOOGLE_PLACES_GROUP_ID,
+            name = "Google Places",
+            description = "Nearby businesses from Google",
+            iconKey = "marker",
+            color = "#FF4285F4",
+            isImported = true,
+            isVisible = prefs.getBoolean(GOOGLE_PLACES_GROUP_ID, true),
+        ),
+        Group(
+            id = OSM_POI_GROUP_ID,
+            name = "OpenStreetMap POIs",
+            description = "Natural & historic landmarks from OSM",
+            iconKey = "mountain",
+            color = "#FF4CAF50",
+            isImported = true,
+            isVisible = prefs.getBoolean(OSM_POI_GROUP_ID, true),
+        ),
+    )
 
     private val _groups = MutableStateFlow<List<Group>>(emptyList())
 
@@ -48,8 +81,8 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
             try {
                 loadAll()
                 cleanupStaleImports()
-                if (_groups.value.isEmpty()) seedDefault()
-                seedPlacesGroups()
+                // Seed default only if no persisted user/imported groups exist yet
+                if (_groups.value.none { it.id != GOOGLE_PLACES_GROUP_ID && it.id != OSM_POI_GROUP_ID }) seedDefault()
             } catch (e: java.io.IOException) {
                 android.util.Log.e("GroupFileRepository", "Storage not accessible on init; permission may be missing", e)
             } catch (e: SecurityException) {
@@ -59,18 +92,29 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
     }
 
     private fun loadAll() {
-        val files = storageManager.getGroupsDir().listFiles { f -> f.extension == "json" } ?: return
-        setGroups(files.mapNotNull { readGroup(it) }.sortedBy { it.createdAt })
+        val persistedGroups = mutableListOf<Group>()
+
+        // User-created groups: groups/<name>_<id8>/group.json
+        storageManager.getGroupsDir().listFiles { f -> f.isDirectory }
+            ?.mapNotNull { dir -> readGroupFromFile(File(dir, "group.json")) }
+            ?.let { persistedGroups.addAll(it) }
+
+        // Bulk-imported groups: pois/<name>_<id8>/manifest.json
+        storageManager.getPoisDir().listFiles { f -> f.isDirectory }
+            ?.mapNotNull { dir -> readGroupFromFile(File(dir, "manifest.json")) }
+            ?.let { persistedGroups.addAll(it) }
+
+        setGroups((systemGroups + persistedGroups).sortedBy { it.createdAt })
     }
 
     /** Removes incomplete imports left behind by a killed or crashed import job. */
     private fun cleanupStaleImports() {
-        val stale = _groups.value.filter { it.isImported && !it.importComplete }
+        val stale = _groups.value.filter { it.isImported && !it.importComplete && it.isBulk }
         if (stale.isEmpty()) return
         android.util.Log.i("GroupFileRepository", "Cleaning up ${stale.size} stale import(s): ${stale.map { it.name }}")
         for (g in stale) {
             storageManager.deletePoiFolder(g.name, g.id)
-            storageManager.getGroupFile(g.name).delete()
+            storageManager.getBulkManifestFile(g.name, g.id).delete()
         }
         setGroups(_groups.value.filter { g -> stale.none { it.id == g.id } })
     }
@@ -83,37 +127,6 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
             color = "#FF2196F3",
         )
         insertRaw(default)
-    }
-
-    /** Seeds the Google Places and OSM POI groups once, using fixed IDs. Idempotent. */
-    private fun seedPlacesGroups() {
-        val existingIds = _groups.value.map { it.id }.toSet()
-        if (GOOGLE_PLACES_GROUP_ID !in existingIds) {
-            insertRaw(
-                Group(
-                    id = GOOGLE_PLACES_GROUP_ID,
-                    name = "Google Places",
-                    description = "Nearby businesses from Google",
-                    iconKey = "marker",
-                    color = "#FF4285F4",
-                    isImported = true,
-                )
-            )
-            android.util.Log.i("GroupFileRepository", "Seeded Google Places group")
-        }
-        if (OSM_POI_GROUP_ID !in existingIds) {
-            insertRaw(
-                Group(
-                    id = OSM_POI_GROUP_ID,
-                    name = "OpenStreetMap POIs",
-                    description = "Natural & historic landmarks from OSM",
-                    iconKey = "mountain",
-                    color = "#FF4CAF50",
-                    isImported = true,
-                )
-            )
-            android.util.Log.i("GroupFileRepository", "Seeded OpenStreetMap POIs group")
-        }
     }
 
     private fun insertRaw(group: Group) {
@@ -156,17 +169,15 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
         val existing = _groups.value.find { it.name.trim().equals(trimmed, ignoreCase = true) && it.isImported }
         if (existing != null) {
             if (existing.isBulk) {
-                // Bulk groups: delete the whole group folder (jsonl + images) wholesale
                 storageManager.deletePoiFolder(existing.name, existing.id)
             } else {
                 val poiIds = poiRepository.getIdsByGroup(existing.id)
                 poiRepository.deleteByIds(poiIds) { done, total ->
                     onProgress("Removing previous import…", done, total)
                 }
-                // Also clean up any bulk POI folder that may exist (e.g. old import with wrong isBulk flag)
                 storageManager.deletePoiFolder(existing.name, existing.id)
             }
-            storageManager.getGroupFile(existing.name).delete()
+            storageManager.getBulkManifestFile(existing.name, existing.id).delete()
             setGroups(_groups.value.filter { it.id != existing.id })
         }
 
@@ -257,11 +268,9 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
     suspend fun update(group: Group): Result<Unit> = withContext(Dispatchers.IO) {
         checkDuplicates(group, excludeId = group.id)?.let { return@withContext Result.failure(it) }
         val old = _groups.value.find { it.id == group.id }
-        // If name changed, delete the old file (new name = new filename)
-        if (old != null && old.name != group.name) {
-            storageManager.getGroupFile(old.name).delete()
+        if (old != null && old.name != group.name && !group.isBulk) {
+            storageManager.renameGroupDir(old.name, group.name, group.id)
         }
-        // Preserve system/import fields that the edit form doesn't manage
         val updated = group.copy(
             isImported = old?.isImported ?: group.isImported,
             isBulk = old?.isBulk ?: group.isBulk,
@@ -278,6 +287,13 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
 
     /** Toggles the isVisible flag without running duplicate validation. Safe to call for any group. */
     suspend fun setVisibility(groupId: String, isVisible: Boolean) = withContext(Dispatchers.IO) {
+        if (groupId == GOOGLE_PLACES_GROUP_ID || groupId == OSM_POI_GROUP_ID) {
+            prefs.edit().putBoolean(groupId, isVisible).apply()
+            setGroups(_groups.value.map {
+                if (it.id == groupId) it.copy(isVisible = isVisible) else it
+            })
+            return@withContext
+        }
         val group = _groups.value.find { it.id == groupId } ?: return@withContext
         val updated = group.copy(isVisible = isVisible, updatedAt = System.currentTimeMillis())
         writeGroup(updated)
@@ -285,12 +301,18 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
     }
 
     suspend fun delete(group: Group) = withContext(Dispatchers.IO) {
-        storageManager.getGroupFile(group.name).delete()
+        if (group.isBulk) {
+            storageManager.getBulkManifestFile(group.name, group.id).delete()
+        } else {
+            storageManager.deleteGroupDir(group.name, group.id)
+        }
         setGroups(_groups.value.filter { it.id != group.id })
     }
 
     private fun checkDuplicates(group: Group, excludeId: String = ""): DuplicateFieldError? {
-        val others = _groups.value.filter { it.id != excludeId }
+        val others = _groups.value.filter {
+            it.id != excludeId && it.id != GOOGLE_PLACES_GROUP_ID && it.id != OSM_POI_GROUP_ID
+        }
         val name = group.name.trim()
         if (others.any { it.name.trim().equals(name, ignoreCase = true) }) return DuplicateFieldError.Name
         group.description?.trim()?.takeIf { it.isNotEmpty() }?.let { desc ->
@@ -302,6 +324,9 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
     }
 
     private fun writeGroup(group: Group) {
+        // System groups are never persisted to disk
+        if (group.id == GOOGLE_PLACES_GROUP_ID || group.id == OSM_POI_GROUP_ID) return
+
         val json = JSONObject().apply {
             put("id", group.id)
             put("name", group.name)
@@ -319,28 +344,36 @@ class GroupFileRepository @Inject constructor(private val storageManager: Storag
             put("updatedAt", group.updatedAt)
             group.sourceZipPath?.let { put("sourceZipPath", it) }
         }
-        storageManager.getGroupFile(group.name).writeText(json.toString())
+        val file = if (group.isBulk) {
+            storageManager.getBulkManifestFile(group.name, group.id)
+        } else {
+            storageManager.getGroupFile(group.name, group.id)
+        }
+        file.writeText(json.toString())
     }
 
-    private fun readGroup(file: File): Group? = try {
-        val json = JSONObject(file.readText())
-        Group(
-            id = json.getString("id"),
-            name = json.getString("name"),
-            description = json.optString("description").takeIf { it.isNotEmpty() },
-            iconKey = json.getString("iconKey"),
-            color = json.getString("color"),
-            shape = if (!json.has("shape") && json.optBoolean("isBulk", false)) "square"
-                    else json.optString("shape", "pin"),
-            isVisible = json.optBoolean("isVisible", true),
-            isImported = json.optBoolean("isImported", false),
-            importComplete = json.optBoolean("importComplete", true),
-            isBulk = json.optBoolean("isBulk", false),
-            bulkPoiCount = json.optInt("bulkPoiCount", 0),
-            type = runCatching { GroupType.valueOf(json.optString("type", "POI")) }.getOrDefault(GroupType.POI),
-            createdAt = json.getLong("createdAt"),
-            updatedAt = json.getLong("updatedAt"),
-            sourceZipPath = json.optString("sourceZipPath").takeIf { it.isNotEmpty() },
-        )
-    } catch (_: Exception) { null }
+    private fun readGroupFromFile(file: File): Group? {
+        if (!file.exists()) return null
+        return try {
+            val json = JSONObject(file.readText())
+            Group(
+                id = json.getString("id"),
+                name = json.getString("name"),
+                description = json.optString("description").takeIf { it.isNotEmpty() },
+                iconKey = json.getString("iconKey"),
+                color = json.getString("color"),
+                shape = if (!json.has("shape") && json.optBoolean("isBulk", false)) "square"
+                        else json.optString("shape", "pin"),
+                isVisible = json.optBoolean("isVisible", true),
+                isImported = json.optBoolean("isImported", false),
+                importComplete = json.optBoolean("importComplete", true),
+                isBulk = json.optBoolean("isBulk", false),
+                bulkPoiCount = json.optInt("bulkPoiCount", 0),
+                type = runCatching { GroupType.valueOf(json.optString("type", "POI")) }.getOrDefault(GroupType.POI),
+                createdAt = json.getLong("createdAt"),
+                updatedAt = json.getLong("updatedAt"),
+                sourceZipPath = json.optString("sourceZipPath").takeIf { it.isNotEmpty() },
+            )
+        } catch (_: Exception) { null }
+    }
 }

@@ -239,6 +239,7 @@ fun MapComponent(
     hillshadeVisible: Boolean = true,
     rasterLayers: List<RasterLayer> = emptyList(),
     baseMapVisible: Boolean = true,
+    osmRoadsGeoJson: FeatureCollection = FeatureCollection.fromFeatures(emptyList<Feature>()),
     onCameraIdle: (lat: Double, lng: Double, zoom: Double, bearing: Double, tilt: Double) -> Unit = { _, _, _, _, _ -> },
     onBoundsChanged: (north: Double, south: Double, east: Double, west: Double, lat: Double, lng: Double, zoom: Double, bearing: Double, tilt: Double) -> Unit = { _, _, _, _, _, _, _, _, _ -> },
     onPoiTapped: (String) -> Unit = {},
@@ -512,6 +513,14 @@ fun MapComponent(
                 )
             }
         }
+    }
+
+    // Push OSM road GeoJSON to the map whenever the cache updates
+    LaunchedEffect(osmRoadsGeoJson, styleReady.value) {
+        val map = mapState.value ?: return@LaunchedEffect
+        if (!styleReady.value) return@LaunchedEffect
+        val style = map.style ?: return@LaunchedEffect
+        (style.getSource("osm-roads-source") as? GeoJsonSource)?.setGeoJson(osmRoadsGeoJson)
     }
 
     // Sync raster (MBTiles) layers: add new sources/layers, remove deleted ones, update visibility
@@ -832,6 +841,9 @@ private const val RASTER_LAYER_PREFIX = "mbtiles-layer-"
 /** Custom layers we add on top of the base map style — never hidden by the base-map toggle. */
 private val BASE_MAP_EXCLUDED_LAYER_IDS = setOf(
     "terrain-hillshade",
+    "osm-roads-line",
+    "osm-paths-line",
+    "osm-roads-labels",
     "saved-routes-lines",
     "live-route-line",
     "osm-poi-symbols",
@@ -880,6 +892,7 @@ private fun setupMapStyle(
     style.addSource(GeoJsonSource("bulk-poi-source", FeatureCollection.fromFeatures(emptyList<Feature>())))
     style.addSource(GeoJsonSource("google-places-source", FeatureCollection.fromFeatures(emptyList<Feature>())))
     style.addSource(GeoJsonSource("search-preview-source", FeatureCollection.fromFeatures(emptyList<Feature>())))
+    style.addSource(GeoJsonSource("osm-roads-source", FeatureCollection.fromFeatures(emptyList<Feature>())))
 
     // --- Terrain sources (shared across all map styles) ---
     style.addSource(
@@ -910,6 +923,58 @@ private fun setupMapStyle(
     } else {
         style.addLayer(hillshadeLayer)
     }
+    // OSM road overlay — sits above hillshade, below user route lines and POI symbols.
+    // Split into two layers: solid lines for driveable roads, dashed for walking/cycling paths.
+    val pathTypes = listOf("track", "path", "footway", "cycleway", "steps", "pedestrian")
+    val isPathFilter = Expression.any(*pathTypes.map {
+        Expression.eq(Expression.get("highway"), Expression.literal(it))
+    }.toTypedArray())
+    val isRoadFilter = Expression.not(isPathFilter)
+
+    style.addLayer(
+        // Driveable roads — solid white lines, width 3px
+        LineLayer("osm-roads-line", "osm-roads-source").apply {
+            withProperties(
+                PropertyFactory.lineColor("rgba(255,255,255,0.9)"),
+                PropertyFactory.lineWidth(3f),
+                PropertyFactory.lineOpacity(0.9f),
+                PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            )
+            withFilter(isRoadFilter)
+            minZoom = 12f
+        }
+    )
+    style.addLayer(
+        // Hiking / cycling paths — dashed yellow-white lines, clearly distinguishable
+        LineLayer("osm-paths-line", "osm-roads-source").apply {
+            withProperties(
+                PropertyFactory.lineColor("rgba(255,220,80,0.95)"),
+                PropertyFactory.lineWidth(2.5f),
+                PropertyFactory.lineOpacity(0.9f),
+                PropertyFactory.lineDasharray(arrayOf(4f, 3f)),
+                PropertyFactory.lineCap(Property.LINE_CAP_BUTT),
+                PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            )
+            withFilter(isPathFilter)
+            minZoom = 12f
+        }
+    )
+    style.addLayer(
+        SymbolLayer("osm-roads-labels", "osm-roads-source").apply {
+            withProperties(
+                PropertyFactory.textField(Expression.get("name")),
+                PropertyFactory.textSize(13f),
+                PropertyFactory.textColor("rgba(255,255,255,0.95)"),
+                PropertyFactory.textHaloColor("rgba(0,0,0,0.7)"),
+                PropertyFactory.textHaloWidth(1.5f),
+                PropertyFactory.symbolPlacement(Property.SYMBOL_PLACEMENT_LINE),
+                PropertyFactory.textOptional(true),
+            )
+            withFilter(Expression.has("name"))
+            minZoom = 13f
+        }
+    )
     style.addLayer(
         LineLayer("saved-routes-lines", "saved-routes-source").withProperties(
             PropertyFactory.lineColor(Expression.get("routeColor")),

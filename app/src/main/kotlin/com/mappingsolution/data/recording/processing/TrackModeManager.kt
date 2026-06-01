@@ -7,7 +7,7 @@ class TrackModeManager {
 
     companion object {
         /** Consecutive snapped fixes required to enter ROAD mode. */
-        const val ROAD_ENTER_COUNT = 2
+        const val ROAD_ENTER_COUNT = 3
 
         /** Consecutive unsnapped fixes required to exit to OFF_ROAD mode. */
         const val ROAD_EXIT_COUNT = 3

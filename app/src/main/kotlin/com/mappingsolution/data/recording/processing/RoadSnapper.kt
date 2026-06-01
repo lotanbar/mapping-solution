@@ -1,13 +1,5 @@
 package com.mappingsolution.data.recording.processing
 
-import android.graphics.PointF
-import android.graphics.RectF
-import org.maplibre.android.geometry.LatLng
-import org.maplibre.android.maps.MapLibreMap
-import org.maplibre.android.style.layers.LineLayer
-import org.maplibre.geojson.LineString
-import org.maplibre.geojson.MultiLineString
-import org.maplibre.geojson.Point
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -16,12 +8,12 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Snaps a GPS position to the nearest road geometry visible in MapLibre.
+ * Snaps a GPS position to the nearest road from a pre-fetched [OsmRoadWay] list.
  *
- * Works entirely offline — road geometries come from the tiles that are
- * already rendered in memory because the map auto-follows the user.
- *
- * Must be called on the main (rendering) thread.
+ * Road geometry comes from [OsmRoadCache], which fetches it from the Overpass API
+ * and caches it locally. This allows road snapping to continue when the map screen
+ * is off (unlike the old `queryRenderedFeatures` approach which required the map view
+ * to be on screen).
  */
 class RoadSnapper {
 
@@ -30,21 +22,33 @@ class RoadSnapper {
         const val SNAP_RADIUS_METERS = 25.0
 
         /**
-         * Additional virtual distance penalty added to road segments that run
-         * roughly perpendicular to the user's direction of travel (degrees → metres).
-         * A road at 90° to travel is penalised by this amount; roads within 45° are unaffected.
+         * Base bearing-penalty at the reference speed ([BEARING_REFERENCE_SPEED_MPS]).
+         * Roads running perpendicular to travel at that speed are penalised by this amount.
          */
         private const val BEARING_WEIGHT_METERS = 6.0
+
+        /**
+         * Speed at which the base bearing weight applies (m/s).
+         * Below [MotionStateEstimator.MIN_BEARING_SPEED_MPS] the bearing is ignored entirely.
+         * Above this reference speed the penalty scales up linearly, capped at
+         * [MAX_BEARING_SCALE] × [BEARING_WEIGHT_METERS].
+         */
+        private const val BEARING_REFERENCE_SPEED_MPS = 15.0   // city driving
+
+        /** Maximum bearing-weight multiplier (reached at ~37 m/s = 135 km/h). */
+        private const val MAX_BEARING_SCALE = 2.5
     }
 
     /**
-     * Tries to project [smoothLat]/[smoothLng] onto the nearest road segment
-     * that is currently rendered by [map].
+     * Tries to project [smoothLat]/[smoothLng] onto the nearest road segment from [roads].
      *
-     * Queries every navigable [LineLayer] whose ID starts with "Road" or "Path" (case-insensitive)
-     * — covering the layers present in the MapTiler satellite-hybrid style:
-     * "Road" (all road classes), "Path" (paved paths/trails), "Path minor" (unpaved/narrow trails).
+     * [roads] is the list of OSM ways cached by [OsmRoadCache] for the current tile and its
+     * 8 neighbours. This function is pure (no side effects, no thread requirements).
      *
+     * @param speedMps          Current speed in m/s. Controls the bearing penalty strength:
+     *                          no penalty below [MotionStateEstimator.MIN_BEARING_SPEED_MPS],
+     *                          scales up to [MAX_BEARING_SCALE]× at highway speeds so the
+     *                          snapper strongly avoids cross-streets when driving fast.
      * @param travelBearingDeg  GPS heading in degrees (0 = north). When provided, roads
      *                          running perpendicular to travel are penalised in the scoring.
      * @param previousLat       Last emitted track point latitude. When provided together with
@@ -59,52 +63,16 @@ class RoadSnapper {
     fun snap(
         smoothLat: Double,
         smoothLng: Double,
-        map: MapLibreMap,
+        roads: List<OsmRoadWay>,
+        speedMps: Float = 0f,
         travelBearingDeg: Float? = null,
         previousLat: Double? = null,
         previousLng: Double? = null,
         maxAllowedJumpMeters: Double = SNAP_RADIUS_METERS,
     ): Pair<Double, Double>? {
-        val style = map.style ?: return null
+        if (roads.isEmpty()) return null
 
-        // Collect navigable line layers from the currently loaded style.
-        // MapTiler hybrid uses CamelCase IDs with spaces (e.g. "Road", "Path", "Path minor"),
-        // not the snake_case "road_motorway" pattern documented in older versions.
-        // We match both casings to stay resilient to style updates, and restrict to
-        // LineLayer to skip label / symbol layers that share similar names.
-        val roadLayerIds = style.layers
-            .filterIsInstance<LineLayer>()
-            .filter { layer ->
-                val id = layer.id
-                id.startsWith("Road") || id.startsWith("road") ||
-                id.startsWith("Path") || id.startsWith("path")
-            }
-            .map { it.id }
-            .toTypedArray()
-
-        if (roadLayerIds.isEmpty()) return null
-
-        // Convert the smoothed GPS position to screen pixel coordinates
-        val center: PointF = map.projection.toScreenLocation(LatLng(smoothLat, smoothLng))
-
-        // Derive a pixel radius that corresponds to SNAP_RADIUS_METERS at the
-        // current zoom/projection by offsetting one radius-length north and
-        // measuring the resulting screen-space distance.
-        val offsetLat = smoothLat + SNAP_RADIUS_METERS / 111_111.0
-        val offsetScreen: PointF = map.projection.toScreenLocation(LatLng(offsetLat, smoothLng))
-        val pixelRadius = abs(offsetScreen.y - center.y).coerceAtLeast(10f)
-
-        val queryRect = RectF(
-            center.x - pixelRadius,
-            center.y - pixelRadius,
-            center.x + pixelRadius,
-            center.y + pixelRadius,
-        )
-
-        val features = map.queryRenderedFeatures(queryRect, *roadLayerIds)
-        if (features.isEmpty()) return null
-
-        // Walk every segment of every returned road feature.
+        // Walk every segment of every road way.
         // Each segment is scored as: geometric distance + bearing penalty.
         // The bearing penalty discourages snapping to roads running perpendicular
         // to the user's direction of travel (e.g. a cross-street or motorway ramp).
@@ -113,40 +81,37 @@ class RoadSnapper {
         var bestLat = smoothLat
         var bestLng = smoothLng
 
-        for (feature in features) {
-            val lineGroups: List<List<Point>> = when (val geom = feature.geometry()) {
-                is LineString -> listOf(geom.coordinates())
-                is MultiLineString -> geom.coordinates()
-                else -> continue
-            }
-            for (line in lineGroups) {
-                for (i in 0 until line.size - 1) {
-                    val a = line[i]
-                    val b = line[i + 1]
-                    val (cLat, cLng) = closestPointOnSegment(
-                        smoothLat, smoothLng,
-                        a.latitude(), a.longitude(),
-                        b.latitude(), b.longitude(),
-                    )
-                    val dist = haversineMeters(smoothLat, smoothLng, cLat, cLng)
+        for (way in roads) {
+            val pts = way.points
+            for (i in 0 until pts.size - 1) {
+                val (aLat, aLng) = pts[i]
+                val (bLat, bLng) = pts[i + 1]
+                val (cLat, cLng) = closestPointOnSegment(
+                    smoothLat, smoothLng, aLat, aLng, bLat, bLng,
+                )
+                val dist = haversineMeters(smoothLat, smoothLng, cLat, cLng)
 
-                    // Bearing penalty: 0 for roads within 45° of travel direction;
-                    // scales up to BEARING_WEIGHT_METERS for roads at 90° (perpendicular).
-                    val bearingPenalty = if (travelBearingDeg != null) {
-                        val segBear = segmentBearing(
-                            a.latitude(), a.longitude(), b.latitude(), b.longitude()
-                        )
-                        val perp = bearingPerpendicularity(travelBearingDeg.toDouble(), segBear)
-                        if (perp > 45.0) ((perp - 45.0) / 45.0) * BEARING_WEIGHT_METERS else 0.0
-                    } else 0.0
+                // Speed-adaptive bearing penalty:
+                //   • below MIN_BEARING_SPEED_MPS: GPS heading is unreliable → no penalty
+                //   • at reference speed (city): base BEARING_WEIGHT_METERS
+                //   • at highway/aviation speed: penalty scales up to MAX_BEARING_SCALE×
+                //     so the snapper strongly prefers roads aligned with the direction of travel
+                val bearingPenalty = if (travelBearingDeg != null &&
+                                         speedMps >= MotionStateEstimator.MIN_BEARING_SPEED_MPS) {
+                    val bearingScale = (speedMps / BEARING_REFERENCE_SPEED_MPS)
+                        .coerceIn(0.0, MAX_BEARING_SCALE)
+                    val effectiveWeight = BEARING_WEIGHT_METERS * bearingScale
+                    val segBear = segmentBearing(aLat, aLng, bLat, bLng)
+                    val perp = bearingPerpendicularity(travelBearingDeg.toDouble(), segBear)
+                    if (perp > 45.0) ((perp - 45.0) / 45.0) * effectiveWeight else 0.0
+                } else 0.0
 
-                    val score = dist + bearingPenalty
-                    if (score < bestScore) {
-                        bestScore = score
-                        bestDistMeters = dist
-                        bestLat = cLat
-                        bestLng = cLng
-                    }
+                val score = dist + bearingPenalty
+                if (score < bestScore) {
+                    bestScore = score
+                    bestDistMeters = dist
+                    bestLat = cLat
+                    bestLng = cLng
                 }
             }
         }

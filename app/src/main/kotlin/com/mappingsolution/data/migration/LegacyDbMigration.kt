@@ -149,7 +149,7 @@ class LegacyDbMigration(private val context: Context, private val storageManager
             put("createdAt", group.createdAt)
             put("updatedAt", group.updatedAt)
         }
-        storageManager.getGroupFile(group.name).writeText(json.toString())
+        storageManager.getGroupFile(group.name, group.id).writeText(json.toString())
     }
 
     private fun writePoi(poi: Poi) {
@@ -166,7 +166,7 @@ class LegacyDbMigration(private val context: Context, private val storageManager
             put("createdAt", poi.createdAt)
             put("updatedAt", poi.updatedAt)
         }
-        storageManager.getPoiFile(poi.name, poi.id).writeText(json.toString())
+        storageManager.getPoiFile(poi.name, poi.id, poi.groupId).writeText(json.toString())
     }
 
     private fun writeRoute(route: Route) {

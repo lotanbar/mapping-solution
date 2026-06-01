@@ -6,12 +6,25 @@ package com.mappingsolution.data.recording.processing
  * Two independent 1-D filters (one per axis) each track
  * state = [position, velocity]. Measurement noise R is set
  * dynamically from Location.accuracy so a shakier fix is trusted less.
+ *
+ * Process noise is **speed-adaptive**: at low speeds (walking) the filter is tight
+ * and smooth; at higher speeds the noise is scaled up so the filter tracks the
+ * rapidly-changing position without lag-induced corner-cutting.
  */
 class GpsKalmanFilter {
 
-    // Tuning: process noise variances (degrees² and (deg/s)²)
+    // Base process noise variances (degrees² and (deg/s)²) — tuned for walking speed.
     private val PROCESS_NOISE_POS = 1e-8
     private val PROCESS_NOISE_VEL = 1e-6
+
+    /**
+     * Speed at which the process noise starts scaling (m/s).
+     * Below this speed the base noise values are used unchanged (scale = 1×).
+     */
+    private val NOISE_SCALE_REFERENCE_SPEED = 3.0   // m/s — brisk walk / slow jog
+
+    /** Maximum noise multiplier cap (reached at reference × [MAX_NOISE_SCALE] m/s). */
+    private val MAX_NOISE_SCALE = 16.0               // hit at 48 m/s ≈ 173 km/h
 
     // Per-axis state: x[0] = position (deg), x[1] = velocity (deg/s)
     private val latX = doubleArrayOf(0.0, 0.0)
@@ -33,12 +46,15 @@ class GpsKalmanFilter {
      *
      * @param accuracyMeters  Location.accuracy (1-sigma, metres)
      * @param timestampMs     System.currentTimeMillis() at fix time
+     * @param speedMps        Current speed estimate (m/s). Used to scale process noise so
+     *                        the filter is tight at walking speed and responsive at highway speed.
      */
     fun process(
         lat: Double,
         lng: Double,
         accuracyMeters: Float,
         timestampMs: Long,
+        speedMps: Float = 0f,
     ): Pair<Double, Double> {
         if (!initialized) {
             latX[0] = lat; latX[1] = 0.0
@@ -53,12 +69,19 @@ class GpsKalmanFilter {
         val dt = ((timestampMs - lastTimestampMs) / 1000.0).coerceIn(0.5, 30.0)
         lastTimestampMs = timestampMs
 
+        // Scale process noise with speed: the filter is tight at walking pace and
+        // progressively more responsive as the user accelerates, preventing the lag
+        // and corner-cutting that occur at highway and aviation speeds.
+        val noiseScale = (speedMps / NOISE_SCALE_REFERENCE_SPEED).coerceIn(1.0, MAX_NOISE_SCALE)
+        val effectivePosNoise = PROCESS_NOISE_POS * noiseScale
+        val effectiveVelNoise = PROCESS_NOISE_VEL * noiseScale
+
         // Convert accuracy from metres to degrees, then square for variance
         val accuracyDeg = accuracyMeters / 111_111.0
         val r = accuracyDeg * accuracyDeg
 
-        val smoothLat = updateAxis(latX, latP, lat, dt, r)
-        val smoothLng = updateAxis(lngX, lngP, lng, dt, r)
+        val smoothLat = updateAxis(latX, latP, lat, dt, r, effectivePosNoise, effectiveVelNoise)
+        val smoothLng = updateAxis(lngX, lngP, lng, dt, r, effectivePosNoise, effectiveVelNoise)
 
         return smoothLat to smoothLng
     }
@@ -76,15 +99,17 @@ class GpsKalmanFilter {
         z: Double,
         dt: Double,
         r: Double,
+        posNoise: Double,
+        velNoise: Double,
     ): Double {
         // Predict
         val predPos = x[0] + x[1] * dt
         val predVel = x[1]
 
-        val pp00 = p[0][0] + dt * (p[1][0] + p[0][1]) + dt * dt * p[1][1] + PROCESS_NOISE_POS
+        val pp00 = p[0][0] + dt * (p[1][0] + p[0][1]) + dt * dt * p[1][1] + posNoise
         val pp01 = p[0][1] + dt * p[1][1]
         val pp10 = p[1][0] + dt * p[1][1]
-        val pp11 = p[1][1] + PROCESS_NOISE_VEL
+        val pp11 = p[1][1] + velNoise
 
         // Update
         val s = pp00 + r           // innovation covariance

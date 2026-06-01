@@ -26,16 +26,27 @@ class PoiFileRepository @Inject constructor(private val storageManager: StorageM
     }
 
     private fun loadAll() {
-        val dir = storageManager.getPoisDir()
-        _pois.value = dir.listFiles { f -> f.isDirectory }
-            ?.mapNotNull { poiDir ->
-                // Skip bulk-import group folders (they contain bulk_pois.jsonl, not individual poi.json files)
-                if (java.io.File(poiDir, "bulk_pois.jsonl").exists()) return@mapNotNull null
-                val jsonFile = java.io.File(poiDir, "poi.json")
-                if (jsonFile.exists()) readPoi(jsonFile) else null
+        val pois = mutableListOf<Poi>()
+
+        // User POIs: groups/<groupFolder>/<poiFolder>/poi.json
+        storageManager.getGroupsDir().listFiles { f -> f.isDirectory }
+            ?.forEach { groupDir ->
+                groupDir.listFiles { f -> f.isDirectory }
+                    ?.forEach { poiDir ->
+                        val jsonFile = File(poiDir, "poi.json")
+                        if (jsonFile.exists()) readPoi(jsonFile)?.let { pois.add(it) }
+                    }
             }
-            ?.sortedBy { it.createdAt }
-            ?: emptyList()
+
+        // Orphan POIs: pois/orphans/<poiFolder>/poi.json
+        File(storageManager.getPoisDir(), "orphans")
+            .listFiles { f -> f.isDirectory }
+            ?.forEach { poiDir ->
+                val jsonFile = File(poiDir, "poi.json")
+                if (jsonFile.exists()) readPoi(jsonFile)?.let { pois.add(it) }
+            }
+
+        _pois.value = pois.sortedBy { it.createdAt }
     }
 
     fun observeAll(): Flow<List<Poi>> = _pois
@@ -81,8 +92,14 @@ class PoiFileRepository @Inject constructor(private val storageManager: StorageM
 
     suspend fun update(poi: Poi) = withContext(Dispatchers.IO) {
         val old = _pois.value.find { it.id == poi.id }
-        if (old != null && old.name != poi.name) {
-            storageManager.renamePoiFolder(old.name, poi.name, poi.id)
+        val nameChanged = old != null && old.name != poi.name
+        val groupChanged = old != null && old.groupId != poi.groupId
+        if (old != null && (nameChanged || groupChanged)) {
+            storageManager.movePoiFolder(
+                oldName = old.name, newName = poi.name,
+                poiId = poi.id,
+                oldGroupId = old.groupId, newGroupId = poi.groupId,
+            )
         }
         val updated = poi.copy(updatedAt = System.currentTimeMillis())
         writePoi(updated)
@@ -90,7 +107,7 @@ class PoiFileRepository @Inject constructor(private val storageManager: StorageM
     }
 
     suspend fun delete(poi: Poi) = withContext(Dispatchers.IO) {
-        storageManager.deletePoiFolder(poi.name, poi.id)
+        storageManager.deletePoiFolder(poi.name, poi.id, poi.groupId)
         _pois.value = _pois.value.filter { it.id != poi.id }
     }
 
@@ -102,7 +119,7 @@ class PoiFileRepository @Inject constructor(private val storageManager: StorageM
         val total = toDelete.size
         var lastEmit = 0L
         for ((i, poi) in toDelete.withIndex()) {
-            storageManager.deletePoiFolder(poi.name, poi.id)
+            storageManager.deletePoiFolder(poi.name, poi.id, poi.groupId)
             val now = System.currentTimeMillis()
             if (now - lastEmit >= 32 || i == total - 1) {
                 onProgress(i + 1, total)
@@ -115,16 +132,28 @@ class PoiFileRepository @Inject constructor(private val storageManager: StorageM
     suspend fun orphan(ids: List<String>) = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         _pois.value = _pois.value.map { poi ->
-            if (poi.id in ids) poi.copy(groupId = null, updatedAt = now).also { writePoi(it) }
-            else poi
+            if (poi.id in ids) {
+                storageManager.movePoiFolder(
+                    oldName = poi.name, newName = poi.name,
+                    poiId = poi.id,
+                    oldGroupId = poi.groupId, newGroupId = null,
+                )
+                poi.copy(groupId = null, updatedAt = now).also { writePoi(it) }
+            } else poi
         }
     }
 
     suspend fun moveToGroup(ids: List<String>, groupId: String) = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         _pois.value = _pois.value.map { poi ->
-            if (poi.id in ids) poi.copy(groupId = groupId, updatedAt = now).also { writePoi(it) }
-            else poi
+            if (poi.id in ids) {
+                storageManager.movePoiFolder(
+                    oldName = poi.name, newName = poi.name,
+                    poiId = poi.id,
+                    oldGroupId = poi.groupId, newGroupId = groupId,
+                )
+                poi.copy(groupId = groupId, updatedAt = now).also { writePoi(it) }
+            } else poi
         }
     }
 
@@ -142,7 +171,7 @@ class PoiFileRepository @Inject constructor(private val storageManager: StorageM
             put("createdAt", poi.createdAt)
             put("updatedAt", poi.updatedAt)
         }
-        storageManager.getPoiFile(poi.name, poi.id).writeText(json.toString())
+        storageManager.getPoiFile(poi.name, poi.id, poi.groupId).writeText(json.toString())
     }
 
     private fun readPoi(file: File): Poi? = try {
