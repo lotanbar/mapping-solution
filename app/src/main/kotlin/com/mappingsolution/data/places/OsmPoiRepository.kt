@@ -165,6 +165,7 @@ class OsmPoiRepository @Inject constructor(
             }
             .values
             .filter { it.lat in south..north && it.lng in west..east }
+            .sortedByDescending { it.wikiRef != null }
     }
 
     /** Clears in-memory POIs and resets session tracking (e.g. when zoomed below threshold). */

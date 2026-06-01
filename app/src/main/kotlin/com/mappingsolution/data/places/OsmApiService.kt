@@ -96,12 +96,12 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
         val query = """
             [out:json][timeout:10][bbox:$south,$west,$north,$east];
             (
-              node[natural~"^(peak|volcano|cave_entrance|waterfall|glacier|hot_spring|geyser)${'$'}"][name][~"^(image|wikimedia_commons|wikipedia)${'$'}"~"."];
-              node[leisure=nature_reserve][name][~"^(image|wikimedia_commons|wikipedia)${'$'}"~"."];
-              node[amenity=observatory][name][~"^(image|wikimedia_commons|wikipedia)${'$'}"~"."];
-              node[historic~"^(monument|castle|archaeological_site|ruins|fort|memorial)${'$'}"][name][~"^(image|wikimedia_commons|wikipedia)${'$'}"~"."];
-              node[tourism=viewpoint][name][~"^(image|wikimedia_commons|wikipedia)${'$'}"~"."];
-              node[man_made=lighthouse][name][~"^(image|wikimedia_commons|wikipedia)${'$'}"~"."];
+              node[natural~"^(peak|volcano|cave_entrance|waterfall|glacier|hot_spring|geyser)${'$'}"][name];
+              node[leisure=nature_reserve][name];
+              node[amenity=observatory][name];
+              node[historic~"^(monument|castle|archaeological_site|ruins|fort|memorial)${'$'}"][name];
+              node[tourism=viewpoint][name];
+              node[man_made=lighthouse][name];
             );
             out body;
         """.trimIndent()
@@ -146,6 +146,7 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
                             val wikiRef = tagsMap["image"]?.takeIf { it.startsWith("http") }
                                 ?: tagsMap["wikimedia_commons"]?.takeIf { it.startsWith("File:") }
                                 ?: tagsMap["wikipedia"]?.takeIf { it.contains(":") && !it.startsWith("http") }
+                                ?: tagsMap["wikidata"]?.takeIf { it.matches(Regex("Q\\d+")) }
                             Poi(
                                 id = "osm_${el.getLong("id")}",
                                 groupId = OSM_POI_GROUP_ID,
@@ -183,13 +184,39 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
      * Resolves a raw OSM image reference to a usable image URL.
      * - Direct URL (starts with "http"): returned as-is.
      * - Wikimedia Commons file (starts with "File:"): resolved via Commons API.
+     * - Wikidata item (format "Q12345"): P18 image claim resolved via Wikidata → Commons API.
      * - Wikipedia article (format "lang:Title"): resolved via Wikipedia pageimages API.
      */
     suspend fun resolveImageUrl(wikiRef: String): String? = when {
         wikiRef.startsWith("http") -> wikiRef.replaceFirst("http://", "https://")
         wikiRef.startsWith("File:") -> resolveCommonsFile(wikiRef)
+        wikiRef.matches(Regex("Q\\d+")) -> resolveWikidataItem(wikiRef)
         wikiRef.contains(":") -> resolveWikipediaArticle(wikiRef)
         else -> null
+    }
+
+    private suspend fun resolveWikidataItem(wikidataId: String): String? {
+        val url = "https://www.wikidata.org/w/api.php" +
+            "?action=wbgetclaims&entity=$wikidataId&property=P18&format=json"
+        return runCatching {
+            val request = Request.Builder().url(url)
+                .addHeader("User-Agent", "mapping-solution/1.0").get().build()
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@runCatching null
+                val claims = JSONObject(response.body!!.string())
+                    .optJSONObject("claims") ?: return@runCatching null
+                val p18 = claims.optJSONArray("P18") ?: return@runCatching null
+                val filename = p18.getJSONObject(0)
+                    .optJSONObject("mainsnak")
+                    ?.optJSONObject("datavalue")
+                    ?.optString("value")
+                    ?.ifBlank { null } ?: return@runCatching null
+                resolveCommonsFile("File:$filename")
+            }
+        }.getOrElse { e ->
+            Log.w("OsmApiService", "resolveWikidataItem failed for $wikidataId", e)
+            null
+        }
     }
 
     private suspend fun resolveCommonsFile(fileRef: String): String? {
