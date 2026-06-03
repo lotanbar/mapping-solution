@@ -8,6 +8,14 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
+ * Result of a successful road snap.
+ * @param lat       Snapped latitude.
+ * @param lng       Snapped longitude.
+ * @param highway   OSM highway tag of the road that was snapped to (e.g. "trunk", "service").
+ */
+data class SnapResult(val lat: Double, val lng: Double, val highway: String)
+
+/**
  * Snaps a GPS position to the nearest road from a pre-fetched [OsmRoadWay] list.
  *
  * Road geometry comes from [OsmRoadCache], which fetches it from the Overpass API
@@ -37,6 +45,37 @@ class RoadSnapper {
 
         /** Maximum bearing-weight multiplier (reached at ~37 m/s = 135 km/h). */
         private const val MAX_BEARING_SCALE = 2.5
+
+        /**
+         * Above this speed (36 km/h), pedestrian-only infrastructure — footways, steps,
+         * pedestrian streets, cycleways — is hard-excluded from snap candidates.
+         * It is physically impossible to travel at car speed on a staircase or footpath.
+         */
+        private const val EXCLUDE_PEDESTRIAN_ABOVE_MPS = 10.0f  // 36 km/h
+
+        /**
+         * Above this speed (54 km/h), off-road / slow surfaces (path, track) are also
+         * hard-excluded. These roads top out well below motorway speeds.
+         */
+        private const val EXCLUDE_PATH_ABOVE_MPS = 15.0f  // 54 km/h
+
+        /**
+         * Integer class ranking for OSM highway types; lower = higher-class road.
+         * Used by [SmartTrackProcessor] to detect implausible road-class downgrades.
+         */
+        fun highwayClass(highway: String): Int = when (highway) {
+            "motorway"                                              -> 0
+            "trunk"                                                -> 1
+            "motorway_link", "trunk_link"                          -> 2
+            "primary", "primary_link"                              -> 3
+            "secondary", "secondary_link"                          -> 4
+            "tertiary", "tertiary_link"                            -> 5
+            "unclassified", "residential", "road", "living_street" -> 6
+            "service"                                              -> 7
+            "track", "path", "cycleway"                            -> 8
+            "footway", "pedestrian", "steps"                       -> 9
+            else                                                   -> 6
+        }
     }
 
     /**
@@ -45,10 +84,12 @@ class RoadSnapper {
      * [roads] is the list of OSM ways cached by [OsmRoadCache] for the current tile and its
      * 8 neighbours. This function is pure (no side effects, no thread requirements).
      *
-     * @param speedMps          Current speed in m/s. Controls the bearing penalty strength:
-     *                          no penalty below [MotionStateEstimator.MIN_BEARING_SPEED_MPS],
-     *                          scales up to [MAX_BEARING_SCALE]× at highway speeds so the
-     *                          snapper strongly avoids cross-streets when driving fast.
+     * @param speedMps          Current speed in m/s. Controls the bearing penalty strength
+     *                          and hard type exclusions:
+     *                          - Above [EXCLUDE_PEDESTRIAN_ABOVE_MPS] (36 km/h): footways,
+     *                            steps, pedestrian streets, cycleways are excluded entirely.
+     *                          - Above [EXCLUDE_PATH_ABOVE_MPS] (54 km/h): paths and tracks
+     *                            are also excluded.
      * @param travelBearingDeg  GPS heading in degrees (0 = north). When provided, roads
      *                          running perpendicular to travel are penalised in the scoring.
      * @param previousLat       Last emitted track point latitude. When provided together with
@@ -58,7 +99,8 @@ class RoadSnapper {
      * @param previousLng       Last emitted track point longitude.
      * @param maxAllowedJumpMeters  Maximum acceptable displacement from [previousLat]/[previousLng].
      *
-     * @return  snapped (lat, lng) if a suitable road is within [SNAP_RADIUS_METERS], or null.
+     * @return  [SnapResult] with snapped position and matched highway type, or null if no
+     *          suitable road is within [SNAP_RADIUS_METERS].
      */
     fun snap(
         smoothLat: Double,
@@ -69,7 +111,7 @@ class RoadSnapper {
         previousLat: Double? = null,
         previousLng: Double? = null,
         maxAllowedJumpMeters: Double = SNAP_RADIUS_METERS,
-    ): Pair<Double, Double>? {
+    ): SnapResult? {
         if (roads.isEmpty()) return null
 
         // Walk every segment of every road way.
@@ -80,8 +122,19 @@ class RoadSnapper {
         var bestDistMeters = Double.MAX_VALUE
         var bestLat = smoothLat
         var bestLng = smoothLng
+        var bestHighway = ""
 
         for (way in roads) {
+            // Hard exclusion: pedestrian infrastructure at car speed.
+            // It is physically impossible to drive 36+ km/h on a staircase or footpath.
+            val hw = way.highway
+            if (speedMps >= EXCLUDE_PEDESTRIAN_ABOVE_MPS &&
+                (hw == "footway" || hw == "pedestrian" || hw == "steps" || hw == "cycleway")
+            ) continue
+            if (speedMps >= EXCLUDE_PATH_ABOVE_MPS &&
+                (hw == "path" || hw == "track")
+            ) continue
+
             val pts = way.points
             for (i in 0 until pts.size - 1) {
                 val (aLat, aLng) = pts[i]
@@ -112,6 +165,7 @@ class RoadSnapper {
                     bestDistMeters = dist
                     bestLat = cLat
                     bestLng = cLng
+                    bestHighway = hw
                 }
             }
         }
@@ -126,7 +180,7 @@ class RoadSnapper {
             if (jumpDist > maxAllowedJumpMeters) return null
         }
 
-        return bestLat to bestLng
+        return SnapResult(lat = bestLat, lng = bestLng, highway = bestHighway)
     }
 
     /** Projects point P onto segment AB, clamping to the segment endpoints. */

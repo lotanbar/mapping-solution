@@ -49,6 +49,19 @@ class SmartTrackProcessor @Inject constructor(private val osmRoadCache: OsmRoadC
     private var lastSnappedLatLng: Pair<Double, Double>? = null
 
     /**
+     * Road class of the most recently committed snap (lower = higher-class road).
+     * See [RoadSnapper.highwayClass]. Reset to [Int.MAX_VALUE] when off-road.
+     */
+    private var committedHighwayClass: Int = Int.MAX_VALUE
+
+    /**
+     * Number of consecutive fixes where the best snap was to a road class more than
+     * [DOWNGRADE_CLASS_THRESHOLD] levels below [committedHighwayClass].
+     * When this reaches [DOWNGRADE_COMMIT_FIXES] the downgrade is accepted.
+     */
+    private var downgradeConsecutive: Int = 0
+
+    /**
      * High-speed road-snap disable state (hysteresis).
      * Snap is disabled when speed exceeds [HIGH_SPEED_SNAP_DISABLE_MPS] and re-enabled
      * only once speed drops below [HIGH_SPEED_SNAP_RESUME_MPS], preventing oscillation
@@ -64,6 +77,8 @@ class SmartTrackProcessor @Inject constructor(private val osmRoadCache: OsmRoadC
         pendingLatLng = null
         pendingTs = 0L
         lastSnappedLatLng = null
+        committedHighwayClass = Int.MAX_VALUE
+        downgradeConsecutive = 0
         snapDisabled = false
     }
 
@@ -134,7 +149,7 @@ class SmartTrackProcessor @Inject constructor(private val osmRoadCache: OsmRoadC
         if (speedMps > HIGH_SPEED_SNAP_DISABLE_MPS) snapDisabled = true
         else if (speedMps < HIGH_SPEED_SNAP_RESUME_MPS) snapDisabled = false
 
-        val rawSnapped: Pair<Double, Double>? = if (!snapDisabled) {
+        val rawSnapResult: SnapResult? = if (!snapDisabled) {
             val roads = osmRoadCache.getRoadsSync(smoothLat, smoothLng)
             if (roads.isNotEmpty()) {
                 runCatching {
@@ -151,6 +166,37 @@ class SmartTrackProcessor @Inject constructor(private val osmRoadCache: OsmRoadC
                 }.getOrNull()
             } else null
         } else null
+
+        // Road-class continuity guard (HMM-style transition filter):
+        // Once committed to a high-class road (e.g. trunk), the snapper must see
+        // [DOWNGRADE_COMMIT_FIXES] consecutive fixes on a significantly lower-class road
+        // before accepting the downgrade. A brief blip onto a service road or footway
+        // parallel to the highway is silently rejected; a real exit (sustained snapping
+        // to a different road class) is accepted after ~16 seconds.
+        val rawSnapped: Pair<Double, Double>? = when {
+            rawSnapResult == null -> null
+            else -> {
+                val proposedClass = RoadSnapper.highwayClass(rawSnapResult.highway)
+                val isDowngrade = committedHighwayClass != Int.MAX_VALUE &&
+                        proposedClass > committedHighwayClass + DOWNGRADE_CLASS_THRESHOLD
+                if (!isDowngrade) {
+                    // Same class, upgrade, or small downgrade (e.g. trunk → primary) — accept.
+                    committedHighwayClass = proposedClass
+                    downgradeConsecutive = 0
+                    rawSnapResult.lat to rawSnapResult.lng
+                } else {
+                    downgradeConsecutive++
+                    if (downgradeConsecutive >= DOWNGRADE_COMMIT_FIXES) {
+                        // Sustained downgrade — real road change, commit.
+                        committedHighwayClass = proposedClass
+                        rawSnapResult.lat to rawSnapResult.lng
+                    } else {
+                        // Grace period — reject this snap; GPS raw position will be used.
+                        null
+                    }
+                }
+            }
+        }
 
         // Snap continuity guard: reject snaps that jump much further than the GPS actually
         // moved since the last accepted snap. Prevents oscillation between parallel road
@@ -173,7 +219,11 @@ class SmartTrackProcessor @Inject constructor(private val osmRoadCache: OsmRoadC
         // Track the last accepted snap; clear when off-road so a stale reference
         // doesn't constrain the first snap of the next road entry.
         if (snapped != null) lastSnappedLatLng = snapped
-        else if (mode == TrackMode.OFF_ROAD) lastSnappedLatLng = null
+        else if (mode == TrackMode.OFF_ROAD) {
+            lastSnappedLatLng = null
+            committedHighwayClass = Int.MAX_VALUE
+            downgradeConsecutive = 0
+        }
 
         val (finalLat, finalLng) = if (mode == TrackMode.ROAD && snapped != null) {
             snapped
@@ -270,5 +320,20 @@ class SmartTrackProcessor @Inject constructor(private val osmRoadCache: OsmRoadC
 
         const val SNAP_CONTINUITY_MULTIPLIER = 2.0
         const val SNAP_CONTINUITY_FLOOR_METERS = 15.0
+
+        /**
+         * Maximum class-level drop allowed without triggering the grace period.
+         * Using [RoadSnapper.highwayClass] (0 = motorway, 9 = steps):
+         *   threshold = 2 means trunk (1) → primary (3) is accepted immediately,
+         *   but trunk (1) → tertiary (5) or service (7) requires sustained evidence.
+         */
+        const val DOWNGRADE_CLASS_THRESHOLD = 2
+
+        /**
+         * Consecutive fixes on a lower class road required before committing to the
+         * downgrade. At ~2 s per fix this is ~16 seconds — long enough to reject
+         * momentary highway interchange noise, short enough to catch a real exit.
+         */
+        const val DOWNGRADE_COMMIT_FIXES = 8
     }
 }
