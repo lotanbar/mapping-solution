@@ -170,9 +170,10 @@ class SmartTrackProcessor @Inject constructor(private val osmRoadCache: OsmRoadC
         // Road-class continuity guard (HMM-style transition filter):
         // Once committed to a high-class road (e.g. trunk), the snapper must see
         // [DOWNGRADE_COMMIT_FIXES] consecutive fixes on a significantly lower-class road
-        // before accepting the downgrade. A brief blip onto a service road or footway
-        // parallel to the highway is silently rejected; a real exit (sustained snapping
-        // to a different road class) is accepted after ~16 seconds.
+        // before committing the downgrade in its class memory. During the grace period the
+        // proposed (lower-class) snap is still used for the emitted position — this gives
+        // immediate correct positioning when genuinely entering a service road, while keeping
+        // the class-memory update conservative to guard against brief GPS drift.
         val rawSnapped: Pair<Double, Double>? = when {
             rawSnapResult == null -> null
             else -> {
@@ -187,13 +188,13 @@ class SmartTrackProcessor @Inject constructor(private val osmRoadCache: OsmRoadC
                 } else {
                     downgradeConsecutive++
                     if (downgradeConsecutive >= DOWNGRADE_COMMIT_FIXES) {
-                        // Sustained downgrade — real road change, commit.
+                        // Sustained downgrade — real road change, commit class memory too.
                         committedHighwayClass = proposedClass
-                        rawSnapResult.lat to rawSnapResult.lng
-                    } else {
-                        // Grace period — reject this snap; GPS raw position will be used.
-                        null
                     }
+                    // Grace period OR just committed: always use the proposed snap position.
+                    // Class memory (committedHighwayClass) updates conservatively above;
+                    // the displayed position tracks the road the GPS is actually over.
+                    rawSnapResult.lat to rawSnapResult.lng
                 }
             }
         }
@@ -213,8 +214,10 @@ class SmartTrackProcessor @Inject constructor(private val osmRoadCache: OsmRoadC
         } else null
 
         // Update hysteresis. Mode switches to ROAD only after ROAD_ENTER_COUNT consecutive
-        // snapped fixes, preventing a single rogue snap from jumping the track.
-        val mode = modeManager.onSnappedResult(snapped != null)
+        // snapped fixes. We signal "on road" whenever ANY road was found nearby (rawSnapResult),
+        // not just when the continuity guard accepted it — grace-period fixes are still over a
+        // road and must not trigger an OFF_ROAD reset that would wipe continuity-guard state.
+        val mode = modeManager.onSnappedResult(rawSnapResult != null)
 
         // Track the last accepted snap; clear when off-road so a stale reference
         // doesn't constrain the first snap of the next road entry.
