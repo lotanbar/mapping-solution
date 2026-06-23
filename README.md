@@ -8,7 +8,7 @@ An Android app for recording GPS data and monitoring trips. Built with modern Ko
 
 - **Map** — MapTiler satellite hybrid, takes 80% of the screen. Shows POIs and routes toggled from the library.
 - **POIs** — Add at current location, assign to a group (inherits group icon + color), attach photos/videos/audio.
-- **Route recording** — Foreground service with live polyline, pause/resume/stop. Kalman-filtered + road-snapped GPS. Auto-saves on force-kill as an *incomplete* recording.
+- **Route recording** — Foreground service with live polyline, pause/resume/stop. Kalman-filtered GPS refined by on-device HMM/Viterbi map-matching (live windowed matcher + full re-match on stop). Auto-saves on force-kill as an *incomplete* recording.
 - **Library** — Browse/search groups, POIs, and routes. Toggle visibility, multi-select, delete, orphan, re-group.
 - **Import** — GPX files only (see below).
 
@@ -155,16 +155,47 @@ MyImport/
 
 ## Smart GPS Track Processing
 
-Recording uses a two-stage offline pipeline on every GPS fix:
+The earlier pipeline snapped each fix to the nearest road independently (greedy snapping). With no
+notion of road-network topology or sequence, it structurally produced the artefacts a "perfect"
+recording must avoid: square turns, lateral bumps, and jumps onto the wrong road at intersections.
 
-1. **Kalman filter** — pure-Kotlin 2D filter (state: lat, lng, dLat, dLng). Measurement noise `R` is set dynamically from `Location.accuracy`, so shakier fixes are trusted less.
-2. **Road snapper** — queries MapLibre's already-loaded tile data (`queryRenderedFeatures`) for road geometries within 25 m of the smoothed position. No network calls — tiles are present because the map auto-follows the user. Projects the point onto the nearest road segment.
+It is replaced by on-device **HMM map-matching** (Newson & Krumm, 2009) solved with the **Viterbi**
+algorithm — the whole path is matched against the connected road graph, so the most likely *route*
+is chosen rather than the nearest segment per point. Everything runs offline; road shapes still come
+from the Overpass API (cached in tiles), and no routing servers are used.
 
-Mode switching uses hysteresis to avoid flickering at road edges:
-- Enter **ROAD** mode after 2 consecutive snapped results.
-- Exit to **OFF_ROAD** after 3 consecutive no-road results.
+**Per fix (live):**
 
-If no road features are found (tile not yet loaded, off-road area), the Kalman-smoothed point is emitted directly and recording continues uninterrupted.
+1. **Kalman filter** — pure-Kotlin 2D filter (state: lat, lng, dLat, dLng). Measurement noise `R`
+   is set dynamically from `Location.accuracy`, so shakier fixes are trusted less.
+2. **Jump guard** — discards fixes that teleport implausibly far (velocity-adaptive threshold).
+3. **Online map-matcher** (`OnlineMapMatcher`) — a streaming Viterbi over a sliding window. Each
+   observation scores candidate road projections by an **emission** term (Gaussian on snap distance)
+   and a **transition** term (`|great-circle − on-road distance| / β`, with a soft bearing prior).
+   A matched point is **committed** only once every surviving path agrees on it, or once it falls a
+   few fixes behind the frontier. This few-second lag at the tip is what lets the live line follow
+   the correct road *through* an intersection — the decision waits until later fixes reveal where
+   you actually went. The latest smoothed position is shown as a provisional "head" so the on-screen
+   line still reaches you.
+
+The raw Kalman-smoothed positions are also written to `smoothed.jsonl` — together with each fix's
+GPS heading, speed and accuracy — so the trip can be re-matched from clean input later (and to
+survive a force-kill).
+
+**On stop (full pass):**
+
+The whole trip is re-matched with the batch `MapMatcher` (full-trajectory Viterbi) over
+`smoothed.jsonl`, ensuring every tile the route crossed is loaded first. The persisted heading,
+speed and accuracy are fed into the matcher as observation features, so the final pass uses the
+same bearing prior and per-fix emission sigma as the live matcher — this is what picks the correct
+road and turn at junctions rather than the merely-nearest segment. A light, curvature-/gap-aware
+`TrackSmoother` finishing pass removes residual lateral jitter, `points.jsonl` is rewritten
+atomically, and the route distance is recomputed from the final matched geometry.
+
+The road graph is **undirected** (one-way restrictions are ignored — a safe simplification for the
+short gaps between fixes). Above ~144 km/h map-matching is disabled (GPS is already accurate and
+tile loading can't keep up); off-road stretches and long stationary gaps pass through unchanged and
+matching restarts cleanly afterwards.
 
 ---
 

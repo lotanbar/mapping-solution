@@ -2,6 +2,7 @@ package com.mappingsolution.data.fs
 
 import com.mappingsolution.data.model.Route
 import com.mappingsolution.data.model.RoutePoint
+import com.mappingsolution.data.recording.SmoothedSample
 import com.mappingsolution.data.util.StorageManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -177,6 +178,44 @@ class RouteFileRepository @Inject constructor(private val storageManager: Storag
                 try {
                     val json = JSONObject(line)
                     RoutePoint(ts = json.getLong("ts"), lat = json.getDouble("lat"), lng = json.getDouble("lng"))
+                } catch (_: Exception) { null }
+            }
+    }
+
+    /** Appends raw Kalman-smoothed samples (position + GPS heading/speed/accuracy) to
+     *  `smoothed.jsonl` — the input for the Stop map-match pass. */
+    suspend fun appendSmoothedSamples(routeId: String, samples: List<SmoothedSample>) = withContext(Dispatchers.IO) {
+        if (samples.isEmpty()) return@withContext
+        val route = _routes.value.find { it.id == routeId } ?: return@withContext
+        val file = storageManager.getRecordingSmoothedFile(route.name, routeId)
+        FileWriter(file, true).use { writer ->
+            for (s in samples) {
+                val brng = s.bearingDeg?.let { ""","brng":$it""" } ?: ""
+                writer.write("""{"ts":${s.ts},"lat":${s.lat},"lng":${s.lng}$brng,"spd":${s.speedMps},"acc":${s.accuracyMeters}}""")
+                writer.write("\n")
+            }
+        }
+    }
+
+    /** Reads `smoothed.jsonl`. Heading/speed/accuracy fall back to [SmoothedSample] defaults for
+     *  older recordings whose smoothed file stored only ts/lat/lng. */
+    suspend fun getSmoothedSamples(routeId: String): List<SmoothedSample> = withContext(Dispatchers.IO) {
+        val route = _routes.value.find { it.id == routeId } ?: return@withContext emptyList()
+        val file = storageManager.getRecordingSmoothedFile(route.name, routeId)
+        if (!file.exists()) return@withContext emptyList()
+        file.readLines()
+            .filter { it.isNotBlank() }
+            .mapNotNull { line ->
+                try {
+                    val json = JSONObject(line)
+                    SmoothedSample(
+                        ts = json.getLong("ts"),
+                        lat = json.getDouble("lat"),
+                        lng = json.getDouble("lng"),
+                        bearingDeg = if (json.has("brng")) json.getDouble("brng") else null,
+                        speedMps = json.optDouble("spd", 0.0),
+                        accuracyMeters = json.optDouble("acc", 12.0),
+                    )
                 } catch (_: Exception) { null }
             }
     }

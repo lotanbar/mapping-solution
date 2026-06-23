@@ -25,17 +25,6 @@ import javax.inject.Singleton
 import kotlin.math.floor
 
 /**
- * A single OSM way (road/path) with geometry and metadata.
- * [id] is the OSM way ID, used for deduplication across overlapping tile fetches.
- */
-data class OsmRoadWay(
-    val id: Long,
-    val highway: String,
-    val name: String?,
-    val points: List<Pair<Double, Double>>,
-)
-
-/**
  * Tile-based in-memory cache of OSM road geometry, fetched from the Overpass API.
  *
  * Tiles are 0.01° × 0.01° (~1.1 km). Each tile is fetched with a 0.005° margin
@@ -89,6 +78,15 @@ class OsmRoadCache @Inject constructor(private val httpClient: OkHttpClient) {
 
     private val _roadsFlow = MutableStateFlow(FeatureCollection.fromFeatures(emptyList<Feature>()))
     val roadsFlow: StateFlow<FeatureCollection> = _roadsFlow
+
+    // Cached routable graph for the current neighbourhood. Returned with a STABLE identity until
+    // the user crosses into a different tile or a neighbourhood tile is (re)loaded; the online
+    // matcher relies on this identity to know when its trellis must be flushed and rebuilt.
+    private val graphLock = Any()
+    private var graphLatIdx = Int.MIN_VALUE
+    private var graphLonIdx = Int.MIN_VALUE
+    private var graphSignature = -1L
+    @Volatile private var cachedGraph: RoadGraph? = null
 
     // ── Tile key helpers ─────────────────────────────────────────────────────────────────────────
 
@@ -156,7 +154,92 @@ class OsmRoadCache @Inject constructor(private val httpClient: OkHttpClient) {
         return result
     }
 
-    // ── Internal fetch logic ──────────────────────────────────────────────────────────────────────
+    /**
+     * Returns a routable [RoadGraph] for the neighbourhood around [lat]/[lon] (the current tile
+     * plus its 8 neighbours, matching [getRoadsSync]).
+     *
+     * The SAME instance is returned on repeated calls until the user crosses into a different tile
+     * or the tile cache changes. The online map-matcher uses this stable identity to detect when
+     * its Viterbi trellis (whose segment IDs are graph-specific) must be flushed and rebuilt.
+     * Returns an empty graph if no tiles are loaded yet.
+     */
+    fun graphAround(lat: Double, lon: Double): RoadGraph {
+        val (latIdx, lonIdx) = tileIndices(lat, lon)
+        // Signature over the 3×3 neighbourhood's fetch times: only changes when a tile that this
+        // graph actually depends on is (re)loaded, so unrelated far-tile fetches don't churn the
+        // graph identity (which would needlessly flush the online matcher's trellis).
+        val signature = neighbourhoodSignature(latIdx, lonIdx)
+        synchronized(graphLock) {
+            val current = cachedGraph
+            if (current != null &&
+                latIdx == graphLatIdx && lonIdx == graphLonIdx &&
+                signature == graphSignature
+            ) {
+                return current
+            }
+            val graph = RoadGraph.build(getRoadsSync(lat, lon))
+            cachedGraph = graph
+            graphLatIdx = latIdx
+            graphLonIdx = lonIdx
+            graphSignature = signature
+            return graph
+        }
+    }
+
+    private fun neighbourhoodSignature(latIdx: Int, lonIdx: Int): Long {
+        var sig = 1125899906842597L
+        for (dLat in -1..1) {
+            for (dLon in -1..1) {
+                val fetchedAt = cache[tileKey(latIdx + dLat, lonIdx + dLon)]?.fetchedAt ?: 0L
+                sig = 31L * sig + fetchedAt
+            }
+        }
+        return sig
+    }
+
+    /**
+     * Suspends until every tile the [points] pass through is loaded (re-fetching tiles that were
+     * evicted or expired during a long recording). Used by the Stop pass so the full re-match has
+     * complete road coverage for the entire trip.
+     */
+    suspend fun ensureCorridorLoaded(points: List<Pair<Double, Double>>) {
+        val tiles = LinkedHashSet<Pair<Int, Int>>()
+        for ((lat, lon) in points) tiles.add(tileIndices(lat, lon))
+        for ((latIdx, lonIdx) in tiles) {
+            val key = tileKey(latIdx, lonIdx)
+            val cached = cache[key]
+            if (cached != null && System.currentTimeMillis() - cached.fetchedAt < TILE_TTL_MS) continue
+            fetchMutex.withLock {
+                val recheck = cache[key]
+                if (recheck != null && System.currentTimeMillis() - recheck.fetchedAt < TILE_TTL_MS) return@withLock
+                val south = latIdx * TILE_DEG - MARGIN_DEG
+                val north = (latIdx + 1) * TILE_DEG + MARGIN_DEG
+                val west  = lonIdx  * TILE_DEG - MARGIN_DEG
+                val east  = (lonIdx  + 1) * TILE_DEG + MARGIN_DEG
+                fetchTile(key, south, west, north, east)
+            }
+        }
+    }
+
+    /**
+     * Builds a routable [RoadGraph] from every cached tile the [points] pass through, deduplicated
+     * by OSM way ID. Call [ensureCorridorLoaded] first to guarantee coverage. Used by the Stop pass.
+     */
+    fun corridorGraph(points: List<Pair<Double, Double>>): RoadGraph {
+        val tiles = LinkedHashSet<Pair<Int, Int>>()
+        for ((lat, lon) in points) tiles.add(tileIndices(lat, lon))
+        val now = System.currentTimeMillis()
+        val seen = HashSet<Long>()
+        val ways = ArrayList<OsmRoadWay>()
+        for ((latIdx, lonIdx) in tiles) {
+            val tile = cache[tileKey(latIdx, lonIdx)] ?: continue
+            if (now - tile.fetchedAt >= TILE_TTL_MS) continue
+            for (way in tile.ways) {
+                if (seen.add(way.id)) ways.add(way)
+            }
+        }
+        return RoadGraph.build(ways)
+    }
 
     private suspend fun fetchTile(
         key: String,
@@ -222,17 +305,42 @@ class OsmRoadCache @Inject constructor(private val httpClient: OkHttpClient) {
                     val node = geometry.getJSONObject(j)
                     node.getDouble("lat") to node.getDouble("lon")
                 }
+                // OSM node IDs, parallel to geometry — these reconstruct the routable topology
+                // (ways meeting at a junction share a node ID). Present with Overpass `out geom`.
+                val nodesArr = el.optJSONArray("nodes")
+                val nodeIds = if (nodesArr != null && nodesArr.length() == pts.size) {
+                    (0 until nodesArr.length()).map { j -> nodesArr.getLong(j) }
+                } else emptyList()
                 ways.add(
                     OsmRoadWay(
                         id = el.getLong("id"),
                         highway = highway,
                         name = tags.optString("name").ifBlank { null },
                         points = pts,
+                        nodeIds = nodeIds,
+                        oneway = parseOneway(tags, highway),
                     )
                 )
             }
         }
         return ways
+    }
+
+    /**
+     * Resolves a way's travel direction along its node order: +1 forward-only, -1 backward-only,
+     * 0 bidirectional. Honours the `oneway` tag (incl. `-1`/`reverse`) and the implicit one-way
+     * cases `junction=roundabout/circular` and motorway carriageways.
+     */
+    private fun parseOneway(tags: JSONObject, highway: String): Int {
+        when (tags.optString("oneway").lowercase()) {
+            "yes", "true", "1" -> return 1
+            "-1", "reverse" -> return -1
+            "no", "false", "0" -> return 0
+        }
+        val junction = tags.optString("junction").lowercase()
+        if (junction == "roundabout" || junction == "circular") return 1
+        if (highway == "motorway" || highway == "motorway_link") return 1
+        return 0
     }
 
     /**

@@ -2,109 +2,91 @@ package com.mappingsolution.data.recording.processing
 
 import android.location.Location
 import com.mappingsolution.data.recording.RecordingPoint
+import com.mappingsolution.data.recording.SmoothedSample
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.max
 
 /**
- * Orchestrates the full smart-track pipeline for each GPS fix:
+ * Result of processing one GPS fix.
+ *
+ * @param committed Matched track points the online matcher is now confident about. These are the
+ *                  authoritative live positions to persist to `points.jsonl`, accumulate distance
+ *                  from, and draw as the solid recorded line. Usually 0 or 1, occasionally more.
+ * @param smoothed  The raw Kalman-smoothed sample for this fix (null if the fix was rejected by
+ *                  the jump guard). Persisted to `smoothed.jsonl` — including the GPS heading,
+ *                  speed and accuracy — so the Stop pass can re-match the whole trip from clean
+ *                  input *with the same observation features the live matcher uses*, and to
+ *                  survive a force-kill.
+ * @param head      The provisional live "tip" to draw ahead of [committed] so the on-screen line
+ *                  reaches the user's current position while the matcher waits to commit. Not
+ *                  persisted. Null when there is no meaningful tip (rejected fix / snap disabled).
+ */
+data class ProcessResult(
+    val committed: List<RecordingPoint>,
+    val smoothed: SmoothedSample?,
+    val head: RecordingPoint?,
+)
+
+/**
+ * Orchestrates the smart-track pipeline for each GPS fix:
  *
  *   Raw GPS fix
  *     → [GpsKalmanFilter]      — removes high-frequency noise; process noise scales with speed
  *     → post-Kalman jump guard — discards fixes that land impossibly far from the previous
- *                                processed position (threshold is velocity-adaptive)
- *     → [RoadSnapper]          — uses OSM road geometry from [OsmRoadCache];
- *                                disabled entirely above [HIGH_SPEED_SNAP_DISABLE_MPS]
- *     → [TrackModeManager]     — hysteresis: require 3 consecutive snapped fixes before
- *                                committing to road mode
- *     → spike detector         — buffers 1 fix of delay; if the previous fix jumped out and
- *                                back (ping-pong), it is replaced with a hold at the last
- *                                stable position
- *     → emit [RecordingPoint]  — null means the fix was buffered/discarded; call [flushPending]
- *                                on stop
+ *                                smoothed position (threshold is velocity-adaptive)
+ *     → [OnlineMapMatcher]     — streaming HMM/Viterbi map-matching against the OSM road graph
+ *                                from [OsmRoadCache]; commits points with a few-fix lag so the
+ *                                live line follows the correct road through intersections.
+ *                                Disabled above [HIGH_SPEED_SNAP_DISABLE_MPS].
  *
- * Accuracy and min-movement pre-filters are applied upstream in [RecordingService].
+ * The greedy per-point `RoadSnapper`/`TrackModeManager` approach this replaces could not reason
+ * about road topology or sequence, which structurally produced the square turns, bumps, and
+ * intersection jumps that map-matching eliminates.
+ *
+ * The authoritative final geometry is produced by the full [MapMatcher] pass run on stop over the
+ * persisted `smoothed.jsonl`; live commits here are provisional.
+ *
+ * Accuracy and min-movement pre-filters are applied upstream in `RecordingService`.
+ * Drive [process]/[flush] from a single coroutine — the matcher is not thread-safe.
  */
 @Singleton
 class SmartTrackProcessor @Inject constructor(private val osmRoadCache: OsmRoadCache) {
 
     private val kalmanFilter = GpsKalmanFilter()
-    private val roadSnapper = RoadSnapper()
-    private val modeManager = TrackModeManager()
+    private val onlineMatcher = OnlineMapMatcher()
+
+    /** Last Kalman-smoothed position, for the post-Kalman jump guard. */
+    private var prevSmoothed: Pair<Double, Double>? = null
 
     /**
-     * The last position returned to the caller (used by the spike detector to detect returns).
-     * Updated only when we actually emit a non-held point.
-     */
-    private var lastEmittedLatLng: Pair<Double, Double>? = null
-
-    /**
-     * The position computed on the PREVIOUS call, buffered for spike-detection.
-     * We delay emission by one fix so the spike detector can compare prev→B→current.
-     */
-    private var pendingLatLng: Pair<Double, Double>? = null
-    private var pendingTs: Long = 0L
-
-    /** Last road-snap position accepted by the continuity guard. Null when off-road. */
-    private var lastSnappedLatLng: Pair<Double, Double>? = null
-
-    /**
-     * Road class of the most recently committed snap (lower = higher-class road).
-     * See [RoadSnapper.highwayClass]. Reset to [Int.MAX_VALUE] when off-road.
-     */
-    private var committedHighwayClass: Int = Int.MAX_VALUE
-
-    /**
-     * Number of consecutive fixes where the best snap was to a road class more than
-     * [DOWNGRADE_CLASS_THRESHOLD] levels below [committedHighwayClass].
-     * When this reaches [DOWNGRADE_COMMIT_FIXES] the downgrade is accepted.
-     */
-    private var downgradeConsecutive: Int = 0
-
-    /**
-     * High-speed road-snap disable state (hysteresis).
-     * Snap is disabled when speed exceeds [HIGH_SPEED_SNAP_DISABLE_MPS] and re-enabled
-     * only once speed drops below [HIGH_SPEED_SNAP_RESUME_MPS], preventing oscillation
-     * near the threshold.
+     * High-speed map-matching disable state (hysteresis): disabled above
+     * [HIGH_SPEED_SNAP_DISABLE_MPS], re-enabled only below [HIGH_SPEED_SNAP_RESUME_MPS].
+     * At those speeds raw GPS is already accurate and tile loading can't keep up.
      */
     private var snapDisabled = false
 
     /** Reset all stateful components. Call when a new recording is started. */
     fun reset() {
         kalmanFilter.reset()
-        modeManager.reset()
-        lastEmittedLatLng = null
-        pendingLatLng = null
-        pendingTs = 0L
-        lastSnappedLatLng = null
-        committedHighwayClass = Int.MAX_VALUE
-        downgradeConsecutive = 0
+        onlineMatcher.reset()
+        prevSmoothed = null
         snapDisabled = false
     }
 
     /**
-     * Flush the last buffered (pending) point when recording stops.
+     * Force-commit the matcher's remaining window when recording stops or pauses.
      * Must be called from the same coroutine context as [process].
      */
-    fun flushPending(): RecordingPoint? {
-        val pending = pendingLatLng ?: return null
-        val ts = pendingTs
-        pendingLatLng = null
-        lastEmittedLatLng = pending
-        return RecordingPoint(ts = ts, lat = pending.first, lng = pending.second)
-    }
+    fun flush(): List<RecordingPoint> =
+        onlineMatcher.flush().map { RecordingPoint(ts = it.ts, lat = it.lat, lng = it.lng) }
 
     /**
-     * Process one GPS fix through the full pipeline.
+     * Process one GPS fix through the pipeline.
      *
-     * @param speedMps  Current speed estimate in m/s. Drives adaptive Kalman noise,
-     *                  bearing penalty scaling, jump guard sizing, and high-speed snap disable.
-     *
-     * Returns a [RecordingPoint] to emit, or **null** if this fix was buffered or discarded.
-     * Null means: do nothing this cycle; the position will appear on the next call (or at stop
-     * via [flushPending]).
+     * @param speedMps Current speed estimate (m/s). Drives adaptive Kalman noise, jump-guard
+     *                 sizing, the bearing prior, and the high-speed disable.
      */
-    suspend fun process(location: Location, speedMps: Float = 0f): RecordingPoint? {
+    fun process(location: Location, speedMps: Float = 0f): ProcessResult {
         val accuracy = if (location.hasAccuracy()) location.accuracy else MAX_ACCURACY_FALLBACK
         val nowMs = System.currentTimeMillis()
 
@@ -116,152 +98,57 @@ class SmartTrackProcessor @Inject constructor(private val osmRoadCache: OsmRoadC
             speedMps = speedMps,
         )
 
-        // Velocity-adaptive post-Kalman jump guard.
-        // At low speed the guard stays at the base 120 m limit; at high speed it grows
-        // proportionally so legitimate movement at highway / aviation speeds is not discarded.
-        // Formula: max(BASE, speed × EXPECTED_INTERVAL_SEC × JUMP_SAFETY_FACTOR)
-        val prevProcessed = pendingLatLng
-        if (prevProcessed != null) {
+        // Velocity-adaptive post-Kalman jump guard: discard fixes that teleport implausibly far
+        // (would poison the filter). Base 120 m at rest, growing with speed.
+        val prev = prevSmoothed
+        if (prev != null) {
             val maxKalmanJump = maxOf(
                 MAX_POST_KALMAN_JUMP_BASE_METERS,
-                (speedMps * EXPECTED_GPS_INTERVAL_SEC * JUMP_SAFETY_FACTOR).toDouble()
+                (speedMps * EXPECTED_GPS_INTERVAL_SEC * JUMP_SAFETY_FACTOR).toDouble(),
             )
-            val smoothDist = haversineMeters(prevProcessed.first, prevProcessed.second, smoothLat, smoothLng)
-            if (smoothDist > maxKalmanJump) {
+            if (haversineMeters(prev.first, prev.second, smoothLat, smoothLng) > maxKalmanJump) {
                 kalmanFilter.reset()
-                return null
+                return ProcessResult(emptyList(), smoothed = null, head = null)
             }
         }
+        prevSmoothed = smoothLat to smoothLng
+        val smoothedPoint = RecordingPoint(ts = nowMs, lat = smoothLat, lng = smoothLng)
+        // Carry the GPS heading/speed/accuracy alongside the smoothed position so the Stop pass
+        // re-matches with the same observation features the live matcher uses (bearing/speed are
+        // the strongest cues for which road and which turn at a junction).
+        val smoothedSample = SmoothedSample(
+            ts = nowMs,
+            lat = smoothLat,
+            lng = smoothLng,
+            bearingDeg = if (location.hasBearing()) location.bearing.toDouble() else null,
+            speedMps = speedMps.toDouble(),
+            accuracyMeters = accuracy.toDouble(),
+        )
 
-        // Travel bearing from the device (degrees, 0 = north). Available when moving.
-        val travelBearing: Float? = if (location.hasBearing()) location.bearing else null
-
-        val maxJumpMeters: Double = if (prevProcessed != null) {
-            val rawMove = haversineMeters(prevProcessed.first, prevProcessed.second, smoothLat, smoothLng)
-            max(rawMove * MAX_JUMP_MULTIPLIER, MIN_JUMP_FLOOR_METERS)
-        } else {
-            RoadSnapper.SNAP_RADIUS_METERS
-        }
-
-        // High-speed snap disable with hysteresis:
-        //   enter disabled mode at HIGH_SPEED_SNAP_DISABLE_MPS (144 km/h)
-        //   re-enable only once speed drops below HIGH_SPEED_SNAP_RESUME_MPS (108 km/h)
+        // High-speed disable with hysteresis.
         if (speedMps > HIGH_SPEED_SNAP_DISABLE_MPS) snapDisabled = true
         else if (speedMps < HIGH_SPEED_SNAP_RESUME_MPS) snapDisabled = false
 
-        val rawSnapResult: SnapResult? = if (!snapDisabled) {
-            val roads = osmRoadCache.getRoadsSync(smoothLat, smoothLng)
-            if (roads.isNotEmpty()) {
-                runCatching {
-                    roadSnapper.snap(
-                        smoothLat = smoothLat,
-                        smoothLng = smoothLng,
-                        roads = roads,
-                        speedMps = speedMps,
-                        travelBearingDeg = travelBearing,
-                        previousLat = prevProcessed?.first,
-                        previousLng = prevProcessed?.second,
-                        maxAllowedJumpMeters = maxJumpMeters,
-                    )
-                }.getOrNull()
-            } else null
-        } else null
-
-        // Road-class continuity guard (HMM-style transition filter):
-        // Once committed to a high-class road (e.g. trunk), the snapper must see
-        // [DOWNGRADE_COMMIT_FIXES] consecutive fixes on a significantly lower-class road
-        // before committing the downgrade in its class memory. During the grace period the
-        // proposed (lower-class) snap is still used for the emitted position — this gives
-        // immediate correct positioning when genuinely entering a service road, while keeping
-        // the class-memory update conservative to guard against brief GPS drift.
-        val rawSnapped: Pair<Double, Double>? = when {
-            rawSnapResult == null -> null
-            else -> {
-                val proposedClass = RoadSnapper.highwayClass(rawSnapResult.highway)
-                val isDowngrade = committedHighwayClass != Int.MAX_VALUE &&
-                        proposedClass > committedHighwayClass + DOWNGRADE_CLASS_THRESHOLD
-                if (!isDowngrade) {
-                    // Same class, upgrade, or small downgrade (e.g. trunk → primary) — accept.
-                    committedHighwayClass = proposedClass
-                    downgradeConsecutive = 0
-                    rawSnapResult.lat to rawSnapResult.lng
-                } else {
-                    downgradeConsecutive++
-                    if (downgradeConsecutive >= DOWNGRADE_COMMIT_FIXES) {
-                        // Sustained downgrade — real road change, commit class memory too.
-                        committedHighwayClass = proposedClass
-                    }
-                    // Grace period OR just committed: always use the proposed snap position.
-                    // Class memory (committedHighwayClass) updates conservatively above;
-                    // the displayed position tracks the road the GPS is actually over.
-                    rawSnapResult.lat to rawSnapResult.lng
-                }
-            }
+        if (snapDisabled) {
+            // Flush any in-flight matched window, then commit the smoothed point directly.
+            val committed = flush().toMutableList()
+            committed.add(smoothedPoint)
+            return ProcessResult(committed, smoothed = smoothedSample, head = null)
         }
 
-        // Snap continuity guard: reject snaps that jump much further than the GPS actually
-        // moved since the last accepted snap. Prevents oscillation between parallel road
-        // features when the smoothed position sits equidistant between two roads.
-        val snapped: Pair<Double, Double>? = if (rawSnapped != null) {
-            val prevSnap = lastSnappedLatLng
-            val prevProc = prevProcessed
-            if (prevSnap != null && prevProc != null) {
-                val snapJump = haversineMeters(prevSnap.first, prevSnap.second, rawSnapped.first, rawSnapped.second)
-                val gpsMove = haversineMeters(prevProc.first, prevProc.second, smoothLat, smoothLng)
-                if (snapJump > maxOf(gpsMove * SNAP_CONTINUITY_MULTIPLIER, SNAP_CONTINUITY_FLOOR_METERS)) null
-                else rawSnapped
-            } else rawSnapped
-        } else null
+        val obs = MatchObservation(
+            ts = nowMs,
+            lat = smoothLat,
+            lng = smoothLng,
+            accuracyMeters = accuracy.toDouble(),
+            bearingDeg = if (location.hasBearing()) location.bearing.toDouble() else null,
+            speedMps = speedMps.toDouble(),
+        )
+        val graph = osmRoadCache.graphAround(smoothLat, smoothLng)
+        val committed = onlineMatcher.add(obs, graph)
+            .map { RecordingPoint(ts = it.ts, lat = it.lat, lng = it.lng) }
 
-        // Update hysteresis. Mode switches to ROAD only after ROAD_ENTER_COUNT consecutive
-        // snapped fixes. We signal "on road" whenever ANY road was found nearby (rawSnapResult),
-        // not just when the continuity guard accepted it — grace-period fixes are still over a
-        // road and must not trigger an OFF_ROAD reset that would wipe continuity-guard state.
-        val mode = modeManager.onSnappedResult(rawSnapResult != null)
-
-        // Track the last accepted snap; clear when off-road so a stale reference
-        // doesn't constrain the first snap of the next road entry.
-        if (snapped != null) lastSnappedLatLng = snapped
-        else if (mode == TrackMode.OFF_ROAD) {
-            lastSnappedLatLng = null
-            committedHighwayClass = Int.MAX_VALUE
-            downgradeConsecutive = 0
-        }
-
-        val (finalLat, finalLng) = if (mode == TrackMode.ROAD && snapped != null) {
-            snapped
-        } else {
-            smoothLat to smoothLng
-        }
-
-        val currentLatLng = finalLat to finalLng
-
-        // ── Spike detector (1-fix delay) ──────────────────────────────────────────────────────
-        val toEmit: RecordingPoint?
-        if (prevProcessed == null) {
-            toEmit = null
-        } else {
-            val prevEmitted = lastEmittedLatLng
-            val isSpike = prevEmitted != null && run {
-                val dAB = haversineMeters(prevEmitted.first, prevEmitted.second, prevProcessed.first, prevProcessed.second)
-                val dBC = haversineMeters(prevProcessed.first, prevProcessed.second, currentLatLng.first, currentLatLng.second)
-                val dAC = haversineMeters(prevEmitted.first, prevEmitted.second, currentLatLng.first, currentLatLng.second)
-                dAB > SPIKE_MIN_METERS && dBC > SPIKE_MIN_METERS &&
-                        dAC < maxOf(dAB, dBC) * SPIKE_RETURN_RATIO
-            }
-            if (isSpike) {
-                val held = prevEmitted!!
-                toEmit = RecordingPoint(ts = pendingTs, lat = held.first, lng = held.second)
-            } else {
-                lastEmittedLatLng = prevProcessed
-                toEmit = RecordingPoint(ts = pendingTs, lat = prevProcessed.first, lng = prevProcessed.second)
-            }
-        }
-
-        pendingLatLng = currentLatLng
-        pendingTs = nowMs
-
-        return toEmit
+        return ProcessResult(committed, smoothed = smoothedSample, head = smoothedPoint)
     }
 
     private fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
@@ -278,65 +165,19 @@ class SmartTrackProcessor @Inject constructor(private val osmRoadCache: OsmRoadC
     private companion object {
         const val MAX_ACCURACY_FALLBACK = 20f
 
-        /** The snap destination must be within this multiplier × actual GPS movement. */
-        const val MAX_JUMP_MULTIPLIER = 3.0
-
-        /** Minimum floor for the road-snap jump guard. */
-        const val MIN_JUMP_FLOOR_METERS = 15.0
-
-        /**
-         * Base maximum plausible Kalman jump at zero speed (metres).
-         * Sized for 150 km/h × ~2.7 s average GPS interval = ~112 m.
-         * At higher speeds the limit grows proportionally via [JUMP_SAFETY_FACTOR].
-         */
+        /** Base maximum plausible Kalman jump at zero speed (metres). ~150 km/h × ~2.7 s. */
         const val MAX_POST_KALMAN_JUMP_BASE_METERS = 120.0
 
-        /**
-         * Conservative expected GPS update interval used in the velocity-adaptive jump guard.
-         * Set to 3 s (between the 2 s normal and 5 s battery-saver intervals) so the guard
-         * is not too tight with a slightly delayed fix.
-         */
+        /** Conservative expected GPS update interval used in the velocity-adaptive jump guard. */
         const val EXPECTED_GPS_INTERVAL_SEC = 3.0f
 
-        /**
-         * Safety multiplier applied on top of expected movement distance.
-         * 2.0 means: allow up to 2× the expected distance at current speed before
-         * calling a fix a Kalman-poisoning teleport.
-         */
+        /** Safety multiplier applied on top of expected movement distance. */
         const val JUMP_SAFETY_FACTOR = 2.0f
 
-        /**
-         * Speed above which road snapping is disabled (m/s). 144 km/h.
-         * At this speed GPS is already accurate enough; snapping to tile geometry
-         * would introduce false corrections and map-tile loading can't keep up.
-         */
+        /** Speed above which map-matching is disabled (m/s). 144 km/h. */
         const val HIGH_SPEED_SNAP_DISABLE_MPS = 40.0f
 
-        /**
-         * Speed below which road snapping is re-enabled after being disabled (m/s). 108 km/h.
-         * Lower than [HIGH_SPEED_SNAP_DISABLE_MPS] to add hysteresis and prevent oscillation.
-         */
+        /** Speed below which map-matching is re-enabled after being disabled (m/s). 108 km/h. */
         const val HIGH_SPEED_SNAP_RESUME_MPS = 30.0f
-
-        const val SPIKE_MIN_METERS = 12.0
-        const val SPIKE_RETURN_RATIO = 0.45
-
-        const val SNAP_CONTINUITY_MULTIPLIER = 2.0
-        const val SNAP_CONTINUITY_FLOOR_METERS = 15.0
-
-        /**
-         * Maximum class-level drop allowed without triggering the grace period.
-         * Using [RoadSnapper.highwayClass] (0 = motorway, 9 = steps):
-         *   threshold = 2 means trunk (1) → primary (3) is accepted immediately,
-         *   but trunk (1) → tertiary (5) or service (7) requires sustained evidence.
-         */
-        const val DOWNGRADE_CLASS_THRESHOLD = 2
-
-        /**
-         * Consecutive fixes on a lower class road required before committing to the
-         * downgrade. At ~2 s per fix this is ~16 seconds — long enough to reject
-         * momentary highway interchange noise, short enough to catch a real exit.
-         */
-        const val DOWNGRADE_COMMIT_FIXES = 8
     }
 }

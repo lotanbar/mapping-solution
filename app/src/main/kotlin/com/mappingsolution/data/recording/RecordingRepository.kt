@@ -1,5 +1,8 @@
 package com.mappingsolution.data.recording
 
+import com.mappingsolution.data.recording.processing.MapMatcher
+import com.mappingsolution.data.recording.processing.MatchObservation
+import com.mappingsolution.data.recording.processing.OsmRoadCache
 import com.mappingsolution.data.recording.processing.TrackSmoother
 import com.mappingsolution.data.fs.RouteFileRepository
 import com.mappingsolution.data.model.Route
@@ -21,13 +24,21 @@ import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 private const val DEFAULT_ROUTE_COLOR = "#FFFF5722"
+
+/** Tolerance for deciding the smoothed track covers the committed track (force-kill safety). */
+private const val SMOOTHED_COVERAGE_TOLERANCE_MS = 30_000L
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @Singleton
 class RecordingRepository @Inject constructor(
     private val routeFileRepository: RouteFileRepository,
+    private val osmRoadCache: OsmRoadCache,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
 
@@ -82,6 +93,15 @@ class RecordingRepository @Inject constructor(
         }
     }
 
+    /** Persists raw Kalman-smoothed samples (position + GPS heading/speed/accuracy) to
+     *  `smoothed.jsonl` for the Stop map-match pass. */
+    fun persistSmoothedSamples(routeId: String, samples: List<SmoothedSample>) {
+        if (samples.isEmpty()) return
+        scope.launch {
+            routeFileRepository.appendSmoothedSamples(routeId, samples)
+        }
+    }
+
     /**
      * Suspends until all previously queued async point-write coroutines have completed.
      *
@@ -94,18 +114,85 @@ class RecordingRepository @Inject constructor(
     }
 
     /**
-     * Applies a gentle, gap-aware, curvature-aware smoothing pass to the stored points,
-     * replacing the file atomically.  Called after [awaitPendingWrites] so all in-flight
-     * writes are guaranteed to have landed before we read and rewrite.
+     * Stop pass: re-matches the whole trip against the OSM road network with a full-trajectory
+     * HMM/Viterbi [MapMatcher] (Newson & Krumm), then applies a light [TrackSmoother] finishing
+     * pass and replaces `points.jsonl` atomically.
      *
-     * Only straight / gradual segments are smoothed; turns, intersections, and stationary
-     * suppression gaps are left untouched.  Timestamps and accumulated distance are unchanged.
+     * Input is the clean `smoothed.jsonl` (raw Kalman output, before live matching) so the final
+     * result isn't biased by the provisional live commits; falls back to `points.jsonl` for older
+     * recordings that predate smoothed capture. Ensures every tile the route crosses is loaded
+     * first so coverage is complete even for tiles evicted during a long recording.
+     *
+     * Each smoothed sample carries its GPS heading/speed/accuracy, which are fed into the matcher
+     * as [MatchObservation] features — the bearing prior and per-fix emission sigma are what let the
+     * final match pick the correct road and turn at junctions instead of the merely-nearest one.
+     *
+     * Returns the authoritative distance (metres) recomputed from the matched geometry, or null
+     * if there was nothing to match (caller keeps the provisional live distance).
      */
-    suspend fun smoothTrack(routeId: String) {
-        val points = routeFileRepository.getPoints(routeId)
-        if (points.size < 3) return
-        val smoothed = TrackSmoother.smooth(points)
-        routeFileRepository.replacePoints(routeId, smoothed)
+    suspend fun mapMatchTrack(routeId: String): Double? {
+        val smoothed = routeFileRepository.getSmoothedSamples(routeId)
+        val committed = routeFileRepository.getPoints(routeId)
+        // Prefer the clean smoothed track (with full observation features), but only if it actually
+        // covers the whole recording. After a force-kill the smoothed write buffer may have lost its
+        // tail, in which case the already-persisted committed points span more of the trip and must
+        // not be replaced by a shorter re-match (those carry no heading/speed, so defaults apply).
+        val useSmoothed = when {
+            smoothed.size < 2 -> false
+            committed.size < 2 -> true
+            else -> smoothedCoversCommitted(smoothed, committed)
+        }
+        val observations: List<MatchObservation> = if (useSmoothed) {
+            smoothed.map {
+                MatchObservation(
+                    ts = it.ts, lat = it.lat, lng = it.lng,
+                    accuracyMeters = it.accuracyMeters,
+                    bearingDeg = it.bearingDeg,
+                    speedMps = it.speedMps,
+                )
+            }
+        } else {
+            committed.map { MatchObservation(ts = it.ts, lat = it.lat, lng = it.lng) }
+        }
+        if (observations.size < 2) return null
+
+        val coords = observations.map { it.lat to it.lng }
+        runCatching { osmRoadCache.ensureCorridorLoaded(coords) }
+        val graph = osmRoadCache.corridorGraph(coords)
+
+        val matched = MapMatcher(graph).match(observations)
+
+        // Light curvature-/gap-aware finishing pass to de-jitter off-road straight runs (on-road
+        // matched points are left exactly on the road centreline by the smoother).
+        val finishedMatched = if (matched.size >= 3) TrackSmoother.smooth(matched) else matched
+        val finished = finishedMatched.map { RoutePoint(ts = it.ts, lat = it.lat, lng = it.lng) }
+        routeFileRepository.replacePoints(routeId, finished)
+        return computeDistanceMeters(finished)
+    }
+
+    /** True when the smoothed track spans the committed track's time range within tolerance. */
+    private fun smoothedCoversCommitted(smoothed: List<SmoothedSample>, committed: List<RoutePoint>): Boolean {
+        val tol = SMOOTHED_COVERAGE_TOLERANCE_MS
+        return smoothed.first().ts <= committed.first().ts + tol &&
+                smoothed.last().ts >= committed.last().ts - tol
+    }
+
+    private fun computeDistanceMeters(points: List<RoutePoint>): Double {
+        var total = 0.0
+        for (i in 1 until points.size) {
+            total += haversineMeters(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng)
+        }
+        return total
+    }
+
+    private fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val r = 6_371_000.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val sinDLat = sin(dLat / 2)
+        val sinDLon = sin(dLon / 2)
+        val a = sinDLat * sinDLat + cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sinDLon * sinDLon
+        return r * 2 * atan2(sqrt(a), sqrt(1 - a))
     }
 
     suspend fun finalizeStop(routeId: String, distanceMeters: Double, durationSec: Long) {

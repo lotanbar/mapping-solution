@@ -358,7 +358,9 @@ fun MainScreen(
                     onOsmPoiTapped = onOsmPoiTapped,
                     onBulkPoiTapped = onBulkPoiTapped,
                     onMapError = { mapError = it },
-                    liveRoutePoints = (recordingState as? RecordingState.Active)?.points ?: emptyList(),
+                    liveRoutePoints = (recordingState as? RecordingState.Active)?.let { active ->
+                        active.points + listOfNotNull(active.liveHead)
+                    } ?: emptyList(),
                     liveRouteColor = (recordingState as? RecordingState.Active)?.color ?: "#FFFF5722",
                     flyToLocation = flyToTarget,
                     searchPreviewLocation = searchPreviewLocation,

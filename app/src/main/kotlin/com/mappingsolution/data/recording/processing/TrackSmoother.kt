@@ -1,26 +1,27 @@
 package com.mappingsolution.data.recording.processing
 
-import com.mappingsolution.data.model.RoutePoint
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
-import kotlin.math.sqrt
 
 /**
  * Post-recording track smoother.
  *
- * Applies a conservative 3-point Gaussian-weighted average to the stored GPS points
- * to reduce residual lateral jitter without distorting the shape of the route.
+ * Applies a conservative 3-point Gaussian-weighted average to reduce residual lateral jitter
+ * without distorting the shape of the route.
  *
- * Two guards prevent geometry corruption:
+ * Three guards prevent geometry corruption:
  *
- *  - **Gap guard**      : never blends across a stationary suppression gap
- *                         (consecutive point timestamps more than [MAX_GAP_MS] apart).
+ *  - **On-road guard** : never blends a point the map-matcher snapped onto a road. Those already
+ *                        lie on the OSM road centreline; averaging them with neighbours only pulls
+ *                        them *off* the road on gentle bends (the "bumps"). Smoothing is therefore
+ *                        limited to off-road passthrough stretches (trails, parking, GPS outages).
+ *  - **Gap guard**     : never blends across a stationary suppression gap
+ *                        (consecutive point timestamps more than [MAX_GAP_MS] apart).
  *  - **Curvature guard**: skips any point where the incoming/outgoing bearing change
- *                         exceeds [MAX_TURN_DEG], preserving turns, intersections and
- *                         switchbacks exactly as recorded.
+ *                        exceeds [MAX_TURN_DEG], preserving turns and switchbacks as recorded.
  *
- * Only lat/lng are modified; timestamps are preserved unchanged.
+ * Only lat/lng are modified; timestamps and the on-road flag are preserved unchanged.
  * The caller is responsible for atomic file replacement (write to .tmp, then rename).
  */
 object TrackSmoother {
@@ -45,13 +46,16 @@ object TrackSmoother {
      * Returns a new list with lat/lng smoothed.  The input list is not mutated.
      * The first and last points are always returned as-is (no boundary artefacts).
      */
-    fun smooth(points: List<RoutePoint>): List<RoutePoint> {
+    fun smooth(points: List<MatchedPoint>): List<MatchedPoint> {
         if (points.size < 3) return points
         val out = points.toMutableList()
         for (i in 1 until points.size - 1) {
             val prev = points[i - 1]
             val curr = points[i]
             val next = points[i + 1]
+
+            // On-road guard: matched points already sit on the road centreline — leave them be.
+            if (curr.onRoad) continue
 
             // Gap guard
             if (curr.ts - prev.ts > MAX_GAP_MS || next.ts - curr.ts > MAX_GAP_MS) continue

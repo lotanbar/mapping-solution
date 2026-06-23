@@ -21,6 +21,7 @@ import com.mappingsolution.data.recording.RecordingEvent
 import com.mappingsolution.data.recording.RecordingPoint
 import com.mappingsolution.data.recording.RecordingRepository
 import com.mappingsolution.data.recording.RecordingState
+import com.mappingsolution.data.recording.SmoothedSample
 import com.mappingsolution.data.recording.processing.MotionState
 import com.mappingsolution.data.recording.processing.MotionStateEstimator
 import com.mappingsolution.data.recording.processing.OsmRoadCache
@@ -32,6 +33,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -49,6 +51,7 @@ class RecordingService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var tickerJob: Job? = null
     private val pendingPoints = mutableListOf<RecordingPoint>()
+    private val pendingSmoothed = mutableListOf<SmoothedSample>()
     private var flushedPointCount = 0
     private var lastLocation: Location? = null
     private var lastLocationAcceptedMs = 0L   // wall-clock time of the last accepted fix
@@ -168,6 +171,8 @@ class RecordingService : Service() {
         smartTrackProcessor.reset()
         lastLocation = null
         lastEmittedPoint = null
+        pendingPoints.clear()
+        pendingSmoothed.clear()
         recordingStartedAtMs = now
         resetMotionState()
         recordingRepository.updateState(
@@ -186,6 +191,7 @@ class RecordingService : Service() {
         lastLocation = null
         lastEmittedPoint = null
         pendingPoints.clear()
+        pendingSmoothed.clear()
         flushedPointCount = 0
         recordingStartedAtMs = System.currentTimeMillis()
         resetMotionState()
@@ -200,8 +206,26 @@ class RecordingService : Service() {
     private fun handlePause() {
         stopLocationUpdates()
         val current = recordingRepository.state.value as? RecordingState.Active ?: return
+        // Force-commit the matcher's in-flight window so the paused line is complete and the tail
+        // survives a kill-while-paused. handlePause runs on Main, where the matcher is confined.
+        val accepted = ArrayList<RecordingPoint>()
+        for (point in smartTrackProcessor.flush()) {
+            val prevEmit = lastEmittedPoint
+            if (prevEmit != null &&
+                haversineMeters(prevEmit.lat, prevEmit.lng, point.lat, point.lng) < 0.5) continue
+            lastEmittedPoint = point
+            pendingPoints.add(point)
+            accepted.add(point)
+        }
         flushPendingPoints(current.routeId)
-        recordingRepository.updateState(current.copy(pausedSinceMs = System.currentTimeMillis()))
+        flushPendingSmoothed(current.routeId)
+        recordingRepository.updateState(
+            current.copy(
+                points = if (accepted.isEmpty()) current.points else current.points + accepted,
+                pausedSinceMs = System.currentTimeMillis(),
+                liveHead = null,
+            )
+        )
     }
 
     private fun handleResume() {
@@ -226,26 +250,35 @@ class RecordingService : Service() {
         if (!isStopping.compareAndSet(false, true)) return
         stopLocationUpdates()
         val current = recordingRepository.state.value as? RecordingState.Active ?: run { stopSelf(); return }
-        // Flush the spike-detector's buffered pending point (the last GPS fix is always held
-        // back by one cycle to enable spike detection; release it now that recording is done).
-        smartTrackProcessor.flushPending()?.let { pendingPoints.add(it) }
-        // Queue any remaining in-memory points through the serialized write scope.
+        // Force-commit the online matcher's remaining window (the last few fixes are held back
+        // pending lookahead). The matcher is confined to the Main thread, so flush there.
+        val flushed = withContext(Dispatchers.Main) { smartTrackProcessor.flush() }
+        for (point in flushed) {
+            val prevEmit = lastEmittedPoint
+            if (prevEmit != null &&
+                haversineMeters(prevEmit.lat, prevEmit.lng, point.lat, point.lng) < 0.5) continue
+            lastEmittedPoint = point
+            pendingPoints.add(point)
+        }
+        // Queue any remaining in-memory points + smoothed positions through the serialized scope.
         if (pendingPoints.isNotEmpty()) {
             val toFlush = pendingPoints.toList()
             pendingPoints.clear()
             recordingRepository.persistPoints(current.routeId, toFlush)
             flushedPointCount += toFlush.size
         }
+        flushPendingSmoothed(current.routeId)
         // Block until every previously queued async write has finished.  This must happen
         // before finalizeStop renames the recording folder; otherwise in-flight writes
         // targeting the old path will fail silently and their points will be lost.
         recordingRepository.awaitPendingWrites()
-        // Apply post-recording smoothing: gentle 3-point Gaussian pass that is gap-aware
-        // and curvature-aware.  Works on the now-complete file; writes atomically.
-        runCatching { recordingRepository.smoothTrack(current.routeId) }
+        // Full HMM/Viterbi re-match of the whole trip for best final quality, then write
+        // points.jsonl atomically. Returns the authoritative distance recomputed from the result.
+        val matchedDistance = runCatching { recordingRepository.mapMatchTrack(current.routeId) }.getOrNull()
+        val finalDistance = matchedDistance ?: current.distanceMeters
         val now = System.currentTimeMillis()
         val durationSec = current.elapsedMs(now) / 1000L
-        recordingRepository.finalizeStop(current.routeId, current.distanceMeters, durationSec)
+        recordingRepository.finalizeStop(current.routeId, finalDistance, durationSec)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -283,6 +316,7 @@ class RecordingService : Service() {
     }
 
     private fun onNewLocation(location: Location) {
+        if (isStopping.get()) return
         val current = recordingRepository.state.value as? RecordingState.Active ?: return
         if (current.isPaused) return
 
@@ -323,6 +357,9 @@ class RecordingService : Service() {
             if (dtSec > 0.0 && rawDist / dtSec > MAX_SPEED_MPS) return
         }
 
+        // Capture the previous accepted timestamp BEFORE overwriting it, so the displacement-based
+        // speed fallback below divides by the real elapsed interval (not ~0).
+        val prevAcceptedMs = lastLocationAcceptedMs
         lastLocation = location
         lastLocationAcceptedMs = nowMs
 
@@ -332,41 +369,62 @@ class RecordingService : Service() {
         // Compute the best available speed estimate to thread through the pipeline.
         // Prefer the GPS Doppler speed; fall back to displacement / elapsed time.
         val speedMps: Float = motionEstimator.reliableSpeed(location)
-            ?: if (last != null && lastLocationAcceptedMs > 0L) {
-                val dtSec = (nowMs - lastLocationAcceptedMs).coerceAtLeast(1L) / 1000.0
+            ?: if (last != null && prevAcceptedMs > 0L) {
+                val dtSec = (nowMs - prevAcceptedMs).coerceAtLeast(1L) / 1000.0
                 (rawDist / dtSec).toFloat()
             } else 0f
 
         scope.launch {
-            // Run Kalman → road snap → mode hysteresis → spike detector on the captured location.
-            // Returns null when the fix is being buffered (first fix) or was discarded.
-            val point = smartTrackProcessor.process(location, speedMps) ?: return@launch
+            if (isStopping.get()) return@launch
+            // Kalman smooth → jump guard → streaming HMM map-matching.
+            // Returns committed matched points (lag a few fixes), the raw smoothed position to
+            // persist for the Stop pass, and a provisional live tip.
+            val result = smartTrackProcessor.process(location, speedMps)
 
-            // Accumulate distance from the last emitted (smoothed/snapped) point
-            val prevEmit = lastEmittedPoint
-            val addedDistance = if (prevEmit != null)
-                haversineMeters(prevEmit.lat, prevEmit.lng, point.lat, point.lng)
-            else 0.0
+            val st0 = recordingRepository.state.value as? RecordingState.Active ?: return@launch
+            if (st0.isPaused) return@launch
 
-            // Deduplicate: skip points within 0.5 m of the last emitted point
-            // (e.g. GPS_PROVIDER and NETWORK_PROVIDER both delivering the same cached fix).
-            if (prevEmit != null && addedDistance < 0.5) return@launch
+            // Persist the raw smoothed position so the Stop pass can re-match from clean input.
+            result.smoothed?.let { sp ->
+                pendingSmoothed.add(sp)
+                if (pendingSmoothed.size >= 20) flushPendingSmoothed(st0.routeId)
+            }
 
-            lastEmittedPoint = point
+            // Fold committed matched points into the live track + distance.
+            var distance = st0.distanceMeters
+            val committed = result.committed
+            val accepted = ArrayList<RecordingPoint>(committed.size)
+            for (point in committed) {
+                val prevEmit = lastEmittedPoint
+                val added = if (prevEmit != null)
+                    haversineMeters(prevEmit.lat, prevEmit.lng, point.lat, point.lng)
+                else 0.0
+                // Deduplicate near-identical fixes.
+                if (prevEmit != null && added < 0.5) continue
+                lastEmittedPoint = point
+                distance += added
+                accepted.add(point)
+                pendingPoints.add(point)
+            }
 
-            // Re-read state; it may have changed while awaiting the road query
-            val st = recordingRepository.state.value as? RecordingState.Active ?: return@launch
-            if (st.isPaused) return@launch
+            if (accepted.isEmpty() && result.head == st0.liveHead) return@launch
 
-            pendingPoints.add(point)
-            val newPoints = st.points + point
-            val newDistance = st.distanceMeters + addedDistance
-            recordingRepository.updateState(st.copy(points = newPoints, distanceMeters = newDistance))
+            val newPoints = if (accepted.isEmpty()) st0.points else st0.points + accepted
+            recordingRepository.updateState(
+                st0.copy(points = newPoints, distanceMeters = distance, liveHead = result.head)
+            )
 
             if (pendingPoints.size >= 20) {
-                flushPendingPoints(st.routeId)
+                flushPendingPoints(st0.routeId)
             }
         }
+    }
+
+    private fun flushPendingSmoothed(routeId: String) {
+        if (pendingSmoothed.isEmpty()) return
+        val toFlush = pendingSmoothed.toList()
+        pendingSmoothed.clear()
+        recordingRepository.persistSmoothedSamples(routeId, toFlush)
     }
 
     private fun flushPendingPoints(routeId: String) {
