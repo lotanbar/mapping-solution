@@ -629,6 +629,9 @@ fun MapComponent(
         android.util.Log.d("MapComponent", "googlePlaces: setGeoJson done with ${features.size} features")
         // Verify image and layer presence
         val layer = style.getLayer("google-places-symbols")
+        layer?.setProperties(
+            PropertyFactory.visibility(if (googlePlaces.isEmpty()) Property.NONE else Property.VISIBLE)
+        )
         android.util.Log.d("MapComponent", "googlePlaces: layer found=${layer != null}")
         val firstIconId = features.firstOrNull()?.getStringProperty("icon-id")
         if (firstIconId != null) {
@@ -654,6 +657,9 @@ fun MapComponent(
             }
         }
         source.setGeoJson(FeatureCollection.fromFeatures(features))
+        style.getLayer("osm-poi-symbols")?.setProperties(
+            PropertyFactory.visibility(if (osmPois.isEmpty()) Property.NONE else Property.VISIBLE)
+        )
     }
 
     LaunchedEffect(bulkPois, groups, styleReady.value) {
@@ -1008,7 +1014,7 @@ private fun setupMapStyle(
             PropertyFactory.iconIgnorePlacement(true),
             PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
             PropertyFactory.iconOpacity(1f),
-            PropertyFactory.iconSize(1.074f),
+            PropertyFactory.iconSize(0.806f),
         )
     )
     style.addLayer(
@@ -1018,7 +1024,7 @@ private fun setupMapStyle(
             PropertyFactory.iconIgnorePlacement(true),
             PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
             PropertyFactory.iconOpacity(1f),
-            PropertyFactory.iconSize(1.074f),
+            PropertyFactory.iconSize(0.806f),
         )
     )
     style.addLayer(
