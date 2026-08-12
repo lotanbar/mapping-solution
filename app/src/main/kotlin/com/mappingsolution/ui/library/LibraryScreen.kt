@@ -91,6 +91,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -678,16 +679,14 @@ fun LibraryScreen(
                     }
                     item(key = "google-discovery-category") {
                         GoogleCategoryRow(
-                            title = "Discovery places",
-                            subtitle = "Food, fuel, culture, attractions and worship",
+                            title = "Travel highlights",
                             checked = showGoogleDiscovery,
                             onCheckedChange = { viewModel.toggleGoogleDiscovery() },
                         )
                     }
                     item(key = "google-other-category") {
                         GoogleCategoryRow(
-                            title = "Other places",
-                            subtitle = "Hotels, shops, services and everything else",
+                            title = "Everyday places",
                             checked = showGoogleOther,
                             onCheckedChange = { viewModel.toggleGoogleOther() },
                         )
@@ -1662,16 +1661,18 @@ private fun PlacesGroupRow(
 @Composable
 private fun GoogleCategoryRow(
     title: String,
-    subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
     ListItem(
         modifier = Modifier.padding(start = 32.dp),
         headlineContent = { Text(title) },
-        supportingContent = { Text(subtitle) },
         trailingContent = {
-            Switch(checked = checked, onCheckedChange = onCheckedChange)
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                modifier = Modifier.scale(0.72f),
+            )
         },
     )
 }

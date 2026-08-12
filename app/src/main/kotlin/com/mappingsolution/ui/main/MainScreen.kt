@@ -57,7 +57,6 @@ import com.mappingsolution.data.places.BULK_POI_MAX_RESULTS
 import com.mappingsolution.data.places.GOOGLE_PLACES_GROUP_ID
 import com.mappingsolution.data.places.GOOGLE_PLACES_MAX_RESULTS
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
-import com.mappingsolution.data.places.OSM_POI_MAX_RESULTS
 import com.mappingsolution.data.recording.RecordingEvent
 import com.mappingsolution.data.recording.RecordingState
 import com.mappingsolution.ui.common.TopToast
@@ -110,13 +109,13 @@ fun MainScreen(
         }
     }
 
-    // Viewport caps: 20 Google + 20 OSM + 30 imported (independent budgets).
+    // Google has a zoom-aware cap; OSM and user/imported data are not capped here.
     // Respect each source's group-level visibility toggle (set from the Library screen).
     val googleGroupVisible = groups.find { it.id == GOOGLE_PLACES_GROUP_ID }?.isVisible != false
     val osmGroupVisible = groups.find { it.id == OSM_POI_GROUP_ID }?.isVisible != false
     val googlePlaces = if (googleGroupVisible) googlePlacesRaw.take(GOOGLE_PLACES_MAX_RESULTS) else emptyList()
     val bulkPois = bulkPoisRaw.take(BULK_POI_MAX_RESULTS)
-    val osmPois = if (osmGroupVisible) osmPoisRaw.take(OSM_POI_MAX_RESULTS) else emptyList()
+    val osmPois = if (osmGroupVisible) osmPoisRaw else emptyList()
 
     var isFetchingLocation by remember { mutableStateOf(false) }
     var locationError by remember { mutableStateOf<String?>(null) }

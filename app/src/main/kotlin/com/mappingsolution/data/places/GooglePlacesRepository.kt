@@ -36,6 +36,7 @@ class GooglePlacesRepository @Inject constructor(
     @Volatile private var quotaExhaustedUntil: Long = 0L
     @Volatile private var lastFetchedBounds: FetchedBounds? = null
     @Volatile private var lastFetchedZoom: Double? = null
+    @Volatile private var lastCategoryMode: String? = null
 
     private val detailCache = ConcurrentHashMap<String, PlaceDetail>()
 
@@ -90,10 +91,11 @@ class GooglePlacesRepository @Inject constructor(
         east: Double,
         west: Double,
         zoom: Double,
+        allowOtherAtZoom: Boolean = true,
     ) = withContext(Dispatchers.IO) {
         Log.d("GooglePlacesRepo", "refreshForViewport: zoom=$zoom N=$north S=$south E=$east W=$west")
         val showDiscovery = categoryPreference.showDiscovery.value
-        val showOther = categoryPreference.showOther.value
+        val showOther = categoryPreference.showOther.value && allowOtherAtZoom
         if (!showDiscovery && !showOther) {
             clear()
             return@withContext
@@ -106,6 +108,13 @@ class GooglePlacesRepository @Inject constructor(
         try {
             _isLoading.value = true
             val displayLimit = googlePoiLimitForZoom(zoom)
+            val categoryMode = "d${if (showDiscovery) 1 else 0}o${if (showOther) 1 else 0}"
+            val categoryChanged = lastCategoryMode != null && lastCategoryMode != categoryMode
+            if (categoryChanged) {
+                _pois.value = emptyList()
+                lastFetchedBounds = null
+            }
+            lastCategoryMode = categoryMode
 
             // Any meaningful zoom-out replaces the detailed set instead of preserving it.
             val prevZoom = lastFetchedZoom
@@ -117,7 +126,7 @@ class GooglePlacesRepository @Inject constructor(
             }
             val centerLat = (north + south) / 2.0
             val centerLng = (east + west) / 2.0
-            val cacheKey = "%.2f_%.2f_%s".format(centerLat, centerLng, categoryPreference.modeKey())
+            val cacheKey = "%.2f_%.2f_%s".format(centerLat, centerLng, categoryMode)
             val currentBounds = FetchedBounds(north, south, east, west)
             val prevBounds = if (zoomedOut) null else lastFetchedBounds
 
@@ -237,6 +246,7 @@ class GooglePlacesRepository @Inject constructor(
         _pois.value = emptyList()
         lastFetchedBounds = null
         lastFetchedZoom = null
+        lastCategoryMode = null
     }
 
     /** Called once on app launch to purge stale cache files. Does not refetch. */

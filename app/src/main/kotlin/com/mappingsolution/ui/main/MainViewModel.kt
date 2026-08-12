@@ -16,6 +16,8 @@ import com.mappingsolution.data.model.Route
 import com.mappingsolution.data.model.RoutePoint
 import com.mappingsolution.data.places.FetchedBounds
 import com.mappingsolution.data.places.GOOGLE_PLACES_FETCH_DEBOUNCE_MS
+import com.mappingsolution.data.places.GOOGLE_EVERYDAY_MIN_ZOOM
+import com.mappingsolution.data.places.GOOGLE_HIGHLIGHTS_MIN_ZOOM
 import com.mappingsolution.data.places.GooglePlacesRepository
 import com.mappingsolution.data.places.NEARBY_POI_MIN_ZOOM
 import com.mappingsolution.data.places.OSM_FETCH_DEBOUNCE_MS
@@ -121,6 +123,7 @@ class MainViewModel @Inject constructor(
     /** Last viewport bounds for which POI fetches were dispatched. */
     @Volatile private var lastDispatchedBounds: FetchedBounds? = null
     @Volatile private var lastGoogleCategoryMode: String? = null
+    @Volatile private var lastOsmNaturalMode: Boolean? = null
 
     /** Tolerance in degrees (~110 m) used to consider two viewports identical. */
     private val BOUNDS_EPSILON = 0.001
@@ -163,8 +166,10 @@ class MainViewModel @Inject constructor(
         val newBounds = FetchedBounds(north, south, east, west)
         val prev = lastDispatchedBounds
         val googleCategoryMode = googlePoiCategoryPreference.modeKey()
+        val includeNaturalOsm = mapLayersState.mapStyle.value == MapStyle.SATELLITE
         if (prev != null &&
             googleCategoryMode == lastGoogleCategoryMode &&
+            includeNaturalOsm == lastOsmNaturalMode &&
             kotlin.math.abs(newBounds.north - prev.north) < BOUNDS_EPSILON &&
             kotlin.math.abs(newBounds.south - prev.south) < BOUNDS_EPSILON &&
             kotlin.math.abs(newBounds.east  - prev.east)  < BOUNDS_EPSILON &&
@@ -176,17 +181,32 @@ class MainViewModel @Inject constructor(
         android.util.Log.d("MainViewModel", "onCameraChanged: PROCEEDING — zoom=$zoom prev=$prev new=$newBounds")
         lastDispatchedBounds = newBounds
         lastGoogleCategoryMode = googleCategoryMode
+        lastOsmNaturalMode = includeNaturalOsm
 
         googleRefreshJob?.cancel()
-        googleRefreshJob = viewModelScope.launch {
-            delay(GOOGLE_PLACES_FETCH_DEBOUNCE_MS)
-            googlePlacesRepository.refreshForViewport(north, south, east, west, zoom)
+        val showGoogleHighlights = googlePoiCategoryPreference.showDiscovery.value &&
+            zoom >= GOOGLE_HIGHLIGHTS_MIN_ZOOM
+        val showGoogleEveryday = googlePoiCategoryPreference.showOther.value &&
+            zoom >= GOOGLE_EVERYDAY_MIN_ZOOM
+        if (!showGoogleHighlights && !showGoogleEveryday) {
+            googlePlacesRepository.clear()
+        } else {
+            googleRefreshJob = viewModelScope.launch {
+                delay(GOOGLE_PLACES_FETCH_DEBOUNCE_MS)
+                googlePlacesRepository.refreshForViewport(
+                    north, south, east, west, zoom,
+                    allowOtherAtZoom = zoom >= GOOGLE_EVERYDAY_MIN_ZOOM,
+                )
+            }
         }
 
         osmRefreshJob?.cancel()
         osmRefreshJob = viewModelScope.launch {
             delay(OSM_FETCH_DEBOUNCE_MS)
-            osmPoiRepository.refreshForViewport(north, south, east, west, zoom)
+            osmPoiRepository.refreshForViewport(
+                north, south, east, west, zoom,
+                includeNatural = includeNaturalOsm,
+            )
         }
 
         val allGroups = groups.value

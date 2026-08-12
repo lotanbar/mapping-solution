@@ -42,7 +42,7 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
         if (!file.exists()) return null
         return runCatching {
             val json = JSONObject(file.readText())
-            if (json.optInt("version", 1) < 3) return null  // stale format without wikiRef
+            if (json.optInt("version", 1) < 5) return null  // v5 uses the expanded POI categories
             val fetchedAt = json.getLong("fetchedAt")
             if (System.currentTimeMillis() - fetchedAt > OSM_CACHE_TTL_MS) return null
             val south = json.optDouble("south", Double.MAX_VALUE)
@@ -66,7 +66,7 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
             val arr = JSONArray()
             pois.forEach { arr.put(poiToJson(it)) }
             val json = JSONObject().apply {
-                put("version", 3)
+                put("version", 5)
                 put("fetchedAt", System.currentTimeMillis())
                 put("south", south)
                 put("west", west)
@@ -87,7 +87,7 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
                     val json = JSONObject(file.readText())
                     val fetchedAt = json.getLong("fetchedAt")
                     val version = json.optInt("version", 1)
-                    if (now - fetchedAt > OSM_CACHE_TTL_MS || version < 3) file.delete()
+                    if (now - fetchedAt > OSM_CACHE_TTL_MS || version < 5) file.delete()
                 }
             }
     }

@@ -52,8 +52,10 @@ fun computeNewStrips(new: FetchedBounds, prev: FetchedBounds?): List<FetchedBoun
 const val GOOGLE_PLACES_GROUP_ID = "google-places-group"
 const val OSM_POI_GROUP_ID = "osm-poi-group"
 
-// Zoom threshold — applies to BOTH sources
-const val NEARBY_POI_MIN_ZOOM = 8.0
+// OSM/imported POIs can remain useful at broad views. Google has its own higher threshold.
+const val NEARBY_POI_MIN_ZOOM = 6.0
+const val GOOGLE_HIGHLIGHTS_MIN_ZOOM = 6.0
+const val GOOGLE_EVERYDAY_MIN_ZOOM = 11.0
 
 const val GOOGLE_PLACES_FETCH_DEBOUNCE_MS = 300L
 const val GOOGLE_PLACES_MAX_RESULTS = 10
@@ -87,7 +89,7 @@ const val OSM_CACHE_TTL_MS = 30L * 24 * 60 * 60 * 1000   // 30 days
 
 /** Google density grows with zoom; other POI sources are not capped here. */
 fun googlePoiLimitForZoom(zoom: Double): Int = when {
-    zoom < 10.0 -> 3
+    zoom < 11.0 -> 3
     zoom < 13.0 -> 6
     else -> GOOGLE_PLACES_MAX_RESULTS
 }

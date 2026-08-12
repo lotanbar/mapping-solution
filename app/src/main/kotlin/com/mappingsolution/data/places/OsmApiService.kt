@@ -4,19 +4,29 @@ import android.util.Log
 import com.mappingsolution.data.model.Poi
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Request
+import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 @Singleton
 class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
 
     private val overpassEndpoints = listOf(
         "https://overpass.openstreetmap.fr/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
         "https://overpass-api.de/api/interpreter",
-        "https://overpass.kumi.systems/api/interpreter",
+        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     )
     private val formMediaType = "application/x-www-form-urlencoded".toMediaType()
 
@@ -92,18 +102,28 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
      * Fetches natural/historic POI nodes within the given bounding box.
      * Returns all matching nodes (no count cap — natural features are sparse).
      */
-    suspend fun fetchPois(south: Double, west: Double, north: Double, east: Double): List<Poi> {
+    suspend fun fetchPois(
+        south: Double,
+        west: Double,
+        north: Double,
+        east: Double,
+        includeNatural: Boolean = true,
+    ): List<Poi>? {
+        val naturalQueries = if (includeNatural) """
+              nwr[natural~"^(cave_entrance|waterfall|glacier|hot_spring|geyser)${'$'}"][name];
+              nwr[leisure=nature_reserve][name];
+        """.trimIndent() else ""
         val query = """
             [out:json][timeout:10][bbox:$south,$west,$north,$east];
             (
-              node[natural~"^(peak|volcano|cave_entrance|waterfall|glacier|hot_spring|geyser)${'$'}"][name];
-              node[leisure=nature_reserve][name];
-              node[amenity=observatory][name];
-              node[historic~"^(monument|castle|archaeological_site|ruins|fort|memorial)${'$'}"][name];
-              node[tourism=viewpoint][name];
-              node[man_made=lighthouse][name];
+              $naturalQueries
+              nwr[amenity~"^(fuel|restaurant|cafe|fast_food|bar|pub|place_of_worship|theatre|arts_centre|observatory)${'$'}"][name];
+              nwr[historic][name];
+              nwr[tourism~"^(attraction|museum|gallery|zoo|aquarium|theme_park|viewpoint)${'$'}"][name];
+              nwr[leisure=garden][name];
+              nwr[man_made=lighthouse][name];
             );
-            out body;
+            out center;
         """.trimIndent()
 
         val body = "data=${java.net.URLEncoder.encode(query, "UTF-8")}".toRequestBody(formMediaType)
@@ -121,7 +141,7 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
             val reqStart = System.currentTimeMillis()
             Log.d("OsmApiService", "Trying endpoint: $endpoint")
             val result = runCatching {
-                httpClient.newCall(request).execute().use { response ->
+                executeCancellable(request).use { response ->
                     val httpMs = System.currentTimeMillis() - reqStart
                     if (!response.isSuccessful) {
                         Log.e("OsmApiService", "HTTP ${response.code} from $endpoint after ${httpMs}ms: ${response.body?.string()}")
@@ -147,12 +167,18 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
                                 ?: tagsMap["wikimedia_commons"]?.takeIf { it.startsWith("File:") }
                                 ?: tagsMap["wikipedia"]?.takeIf { it.contains(":") && !it.startsWith("http") }
                                 ?: tagsMap["wikidata"]?.takeIf { it.matches(Regex("Q\\d+")) }
+                            val center = el.optJSONObject("center")
+                            val lat = if (el.has("lat")) el.getDouble("lat")
+                                else center?.optDouble("lat") ?: return@runCatching null
+                            val lng = if (el.has("lon")) el.getDouble("lon")
+                                else center?.optDouble("lon") ?: return@runCatching null
+                            val osmType = el.optString("type", "node")
                             Poi(
-                                id = "osm_${el.getLong("id")}",
+                                id = "osm_${osmType.firstOrNull() ?: 'n'}${el.getLong("id")}",
                                 groupId = OSM_POI_GROUP_ID,
                                 name = name,
-                                lat = el.getDouble("lat"),
-                                lng = el.getDouble("lon"),
+                                lat = lat,
+                                lng = lng,
                                 iconKey = resolvedIconKey,
                                 wikiRef = wikiRef,
                                 createdAt = now,
@@ -166,6 +192,7 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
             }
 
             val pois = result.getOrElse { e ->
+                if (e is CancellationException) throw e
                 Log.w("OsmApiService", "fetchPois failed for $endpoint after ${System.currentTimeMillis() - reqStart}ms: ${e.message}")
                 null
             }
@@ -177,8 +204,26 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
             }
         }
         Log.e("OsmApiService", "fetchPois: all Overpass endpoints failed")
-        return emptyList()
+        return null
     }
+
+    /** Cancels the underlying OkHttp call immediately when a newer viewport cancels this coroutine. */
+    private suspend fun executeCancellable(request: Request): Response =
+        suspendCancellableCoroutine { continuation ->
+            val call = httpClient.newCall(request)
+            call.timeout().timeout(7, TimeUnit.SECONDS)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (continuation.isActive) continuation.resumeWithException(e)
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    if (continuation.isActive) continuation.resume(response)
+                    else response.close()
+                }
+            })
+        }
 
     /**
      * Resolves a raw OSM image reference to a usable image URL.
