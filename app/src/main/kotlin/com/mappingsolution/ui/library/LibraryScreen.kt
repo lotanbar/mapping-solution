@@ -74,6 +74,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -153,6 +154,8 @@ fun LibraryScreen(
     val osmPoiGroup by viewModel.osmPoiGroup.collectAsState()
     val mapStyle by viewModel.mapStyle.collectAsState()
     val hillshadeVisible by viewModel.hillshadeVisible.collectAsState()
+    val showGoogleDiscovery by viewModel.showGoogleDiscovery.collectAsState()
+    val showGoogleOther by viewModel.showGoogleOther.collectAsState()
 
     val context = LocalContext.current
 
@@ -670,6 +673,23 @@ fun LibraryScreen(
                             group = group,
                             count = googlePlaceCount,
                             onToggleVisibility = { viewModel.toggleGooglePlacesVisibility() },
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                    }
+                    item(key = "google-discovery-category") {
+                        GoogleCategoryRow(
+                            title = "Discovery places",
+                            subtitle = "Food, fuel, culture, attractions and worship",
+                            checked = showGoogleDiscovery,
+                            onCheckedChange = { viewModel.toggleGoogleDiscovery() },
+                        )
+                    }
+                    item(key = "google-other-category") {
+                        GoogleCategoryRow(
+                            title = "Other places",
+                            subtitle = "Hotels, shops, services and everything else",
+                            checked = showGoogleOther,
+                            onCheckedChange = { viewModel.toggleGoogleOther() },
                         )
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                     }
@@ -1635,6 +1655,23 @@ private fun PlacesGroupRow(
                     modifier = Modifier.size(26.dp),
                 )
             }
+        },
+    )
+}
+
+@Composable
+private fun GoogleCategoryRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    ListItem(
+        modifier = Modifier.padding(start = 32.dp),
+        headlineContent = { Text(title) },
+        supportingContent = { Text(subtitle) },
+        trailingContent = {
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
         },
     )
 }

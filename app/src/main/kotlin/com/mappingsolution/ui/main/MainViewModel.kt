@@ -21,6 +21,7 @@ import com.mappingsolution.data.places.NEARBY_POI_MIN_ZOOM
 import com.mappingsolution.data.places.OSM_FETCH_DEBOUNCE_MS
 import com.mappingsolution.data.places.OsmPoiRepository
 import com.mappingsolution.data.prefs.ViewportPreference
+import com.mappingsolution.data.prefs.GooglePoiCategoryPreference
 import com.mappingsolution.data.recording.processing.OsmRoadCache
 import dagger.hilt.android.lifecycle.HiltViewModel
 import org.maplibre.geojson.Feature
@@ -52,6 +53,7 @@ class MainViewModel @Inject constructor(
     private val mapLayersState: MapLayersState,
     private val searchPreviewState: SearchPreviewState,
     val osmRoadCache: OsmRoadCache,
+    private val googlePoiCategoryPreference: GooglePoiCategoryPreference,
 ) : ViewModel() {
 
     val groups: StateFlow<List<Group>> = groupRepository.observeAll()
@@ -118,6 +120,7 @@ class MainViewModel @Inject constructor(
 
     /** Last viewport bounds for which POI fetches were dispatched. */
     @Volatile private var lastDispatchedBounds: FetchedBounds? = null
+    @Volatile private var lastGoogleCategoryMode: String? = null
 
     /** Tolerance in degrees (~110 m) used to consider two viewports identical. */
     private val BOUNDS_EPSILON = 0.001
@@ -159,7 +162,9 @@ class MainViewModel @Inject constructor(
         // Epsilon of 0.001° ≈ 110 m — well above MapLibre's floating-point jitter on resume.
         val newBounds = FetchedBounds(north, south, east, west)
         val prev = lastDispatchedBounds
+        val googleCategoryMode = googlePoiCategoryPreference.modeKey()
         if (prev != null &&
+            googleCategoryMode == lastGoogleCategoryMode &&
             kotlin.math.abs(newBounds.north - prev.north) < BOUNDS_EPSILON &&
             kotlin.math.abs(newBounds.south - prev.south) < BOUNDS_EPSILON &&
             kotlin.math.abs(newBounds.east  - prev.east)  < BOUNDS_EPSILON &&
@@ -170,6 +175,7 @@ class MainViewModel @Inject constructor(
         }
         android.util.Log.d("MainViewModel", "onCameraChanged: PROCEEDING — zoom=$zoom prev=$prev new=$newBounds")
         lastDispatchedBounds = newBounds
+        lastGoogleCategoryMode = googleCategoryMode
 
         googleRefreshJob?.cancel()
         googleRefreshJob = viewModelScope.launch {

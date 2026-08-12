@@ -23,7 +23,7 @@ class GooglePlacesCache @Inject constructor(@ApplicationContext context: Context
         if (!file.exists()) return null
         return runCatching {
             val json = JSONObject(file.readText())
-            if (json.optInt("version", 1) < 2) return null  // stale format without iconKey
+            if (json.optInt("version", 1) < 3) return null  // v3 uses the discovery-only type filter
             val fetchedAt = json.getLong("fetchedAt")
             if (System.currentTimeMillis() - fetchedAt > GOOGLE_PLACES_CACHE_TTL_MS) return null
             val arr = json.getJSONArray("pois")
@@ -42,7 +42,7 @@ class GooglePlacesCache @Inject constructor(@ApplicationContext context: Context
             val arr = JSONArray()
             pois.forEach { arr.put(poiToJson(it)) }
             val json = JSONObject().apply {
-                put("version", 2)
+                put("version", 3)
                 put("fetchedAt", System.currentTimeMillis())
                 put("pois", arr)
             }
@@ -59,7 +59,7 @@ class GooglePlacesCache @Inject constructor(@ApplicationContext context: Context
                     val json = JSONObject(file.readText())
                     val fetchedAt = json.getLong("fetchedAt")
                     val version = json.optInt("version", 1)
-                    if (now - fetchedAt > GOOGLE_PLACES_CACHE_TTL_MS || version < 2) file.delete()
+                    if (now - fetchedAt > GOOGLE_PLACES_CACHE_TTL_MS || version < 3) file.delete()
                 }
             }
     }

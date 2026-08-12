@@ -62,6 +62,8 @@ import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private fun styleUrl(mapStyle: MapStyle = MapStyle.SATELLITE) = when (mapStyle) {
     MapStyle.SATELLITE ->
@@ -132,7 +134,7 @@ private fun createPoiCircle(
     val iconSize = size * 0.55f
     val offset = (size - iconSize) / 2f
 
-    drawScope.draw(density, layoutDirection, composeCanvas, Size(size.toFloat(), size.toFloat())) {
+    drawScope.draw(density, layoutDirection, composeCanvas, Size(bitmap.width.toFloat(), bitmap.height.toFloat())) {
         withTransform({ translate(offset, offset) }) {
             with(painter) {
                 draw(
@@ -170,7 +172,7 @@ private fun createPoiSquare(
     val iconSize = size * 0.55f
     val offset = (size - iconSize) / 2f
 
-    drawScope.draw(density, layoutDirection, composeCanvas, Size(size.toFloat(), size.toFloat())) {
+    drawScope.draw(density, layoutDirection, composeCanvas, Size(bitmap.width.toFloat(), bitmap.height.toFloat())) {
         withTransform({ translate(offset, offset) }) {
             with(painter) {
                 draw(
@@ -208,7 +210,7 @@ private fun createPoiHexagon(
     val iconSize = size * 0.50f
     val offset = (size - iconSize) / 2f
 
-    drawScope.draw(density, layoutDirection, composeCanvas, Size(size.toFloat(), size.toFloat())) {
+    drawScope.draw(density, layoutDirection, composeCanvas, Size(bitmap.width.toFloat(), bitmap.height.toFloat())) {
         withTransform({ translate(offset, offset) }) {
             with(painter) {
                 draw(
@@ -359,8 +361,6 @@ fun MapComponent(
                 mapView = mapView,
                 lifecycleOwner = lifecycleOwner,
                 groupBitmaps = groupBitmaps,
-                allIconKeys = allIconKeys,
-                allPainters = allPainters,
                 placePainterFallback = placePainterFallback,
                 density = density,
                 layoutDirection = layoutDirection,
@@ -382,18 +382,6 @@ fun MapComponent(
         }
     }
 
-    // Register all catalog icon bitmaps for Google and OSM on style ready
-    LaunchedEffect(styleReady.value) {
-        val map = mapState.value ?: return@LaunchedEffect
-        if (!styleReady.value) return@LaunchedEffect
-        val style = map.style ?: return@LaunchedEffect
-        allIconKeys.forEach { key ->
-            val painter = allPainters[key] ?: placePainterFallback
-            style.addImage("pin-google-$key", createPoiCircle(key, painter, density, layoutDirection))
-            style.addImage("pin-osm-$key", createPoiHexagon(key, painter, density, layoutDirection))
-        }
-    }
-
     // Re-render POIs whenever data or style readiness changes
     LaunchedEffect(pois, groups, styleReady.value) {
         val map = mapState.value ?: return@LaunchedEffect
@@ -402,16 +390,18 @@ fun MapComponent(
         val source = style.getSource("poi-source") as? GeoJsonSource ?: return@LaunchedEffect
 
         val hiddenGroupIds = groups.filter { !it.isVisible }.map { it.id }.toSet()
-        val features = pois.filter { poi ->
-            poi.isVisible && (poi.groupId == null || poi.groupId !in hiddenGroupIds)
-        }.map { poi ->
-            val iconId = "pin-${poi.groupId ?: "default"}"
-            val props = JsonObject().apply {
-                addProperty("poiId", poi.id)
-                addProperty("icon-id", iconId)
-                addProperty("name", poi.name)
+        val features = withContext(Dispatchers.Default) {
+            pois.filter { poi ->
+                poi.isVisible && (poi.groupId == null || poi.groupId !in hiddenGroupIds)
+            }.map { poi ->
+                val iconId = "pin-${poi.groupId ?: "default"}"
+                val props = JsonObject().apply {
+                    addProperty("poiId", poi.id)
+                    addProperty("icon-id", iconId)
+                    addProperty("name", poi.name)
+                }
+                Feature.fromGeometry(Point.fromLngLat(poi.lng, poi.lat), props)
             }
-            Feature.fromGeometry(Point.fromLngLat(poi.lng, poi.lat), props)
         }
         source.setGeoJson(FeatureCollection.fromFeatures(features))
     }
@@ -593,113 +583,24 @@ fun MapComponent(
     }
 
     LaunchedEffect(googlePlaces, styleReady.value) {
-        android.util.Log.d("MapComponent", "googlePlaces LaunchedEffect fired: ${googlePlaces.size} pois, styleReady=${styleReady.value}")
-        val map = mapState.value
-        if (map == null) {
-            android.util.Log.w("MapComponent", "googlePlaces: mapState is null, skipping")
-            return@LaunchedEffect
-        }
-        if (!styleReady.value) {
-            android.util.Log.w("MapComponent", "googlePlaces: style not ready, skipping")
-            return@LaunchedEffect
-        }
-        val style = map.style
-        if (style == null) {
-            android.util.Log.w("MapComponent", "googlePlaces: map.style is null, skipping")
-            return@LaunchedEffect
-        }
-        val source = style.getSource("google-places-source") as? GeoJsonSource
-        if (source == null) {
-            android.util.Log.e("MapComponent", "googlePlaces: 'google-places-source' not found in style!")
-            return@LaunchedEffect
-        }
-        val features = googlePlaces.map { poi ->
-            val iconId = "pin-google-${poi.iconKey ?: "marker"}"
-            android.util.Log.d("MapComponent", "  googlePoi: ${poi.name} iconId=$iconId lat=${poi.lat} lng=${poi.lng}")
-            Feature.fromGeometry(
-                Point.fromLngLat(poi.lng, poi.lat),
-                null,
-                poi.id,
-            ).apply {
-                addStringProperty("poiId", poi.id)
-                addStringProperty("icon-id", iconId)
-            }
-        }
-        source.setGeoJson(FeatureCollection.fromFeatures(features))
-        android.util.Log.d("MapComponent", "googlePlaces: setGeoJson done with ${features.size} features")
-        // Verify image and layer presence
-        val layer = style.getLayer("google-places-symbols")
-        layer?.setProperties(
-            PropertyFactory.visibility(if (googlePlaces.isEmpty()) Property.NONE else Property.VISIBLE)
-        )
-        android.util.Log.d("MapComponent", "googlePlaces: layer found=${layer != null}")
-        val firstIconId = features.firstOrNull()?.getStringProperty("icon-id")
-        if (firstIconId != null) {
-            val img = style.getImage(firstIconId)
-            android.util.Log.d("MapComponent", "googlePlaces: image '$firstIconId' in style=${img != null} (${img?.width}x${img?.height})")
-        }
-    }
-
-    LaunchedEffect(osmPois, styleReady.value) {
         val map = mapState.value ?: return@LaunchedEffect
         if (!styleReady.value) return@LaunchedEffect
         val style = map.style ?: return@LaunchedEffect
-        val source = style.getSource("osm-poi-source") as? GeoJsonSource ?: return@LaunchedEffect
-        val features = osmPois.map { poi ->
-            val iconId = "pin-osm-${poi.iconKey ?: "marker"}"
-            Feature.fromGeometry(
-                Point.fromLngLat(poi.lng, poi.lat),
-                null,
-                poi.id,
-            ).apply {
-                addStringProperty("poiId", poi.id)
-                addStringProperty("icon-id", iconId)
-            }
-        }
-        source.setGeoJson(FeatureCollection.fromFeatures(features))
-        style.getLayer("osm-poi-symbols")?.setProperties(
-            PropertyFactory.visibility(if (osmPois.isEmpty()) Property.NONE else Property.VISIBLE)
-        )
-    }
+        val source = style.getSource("google-places-source") as? GeoJsonSource ?: return@LaunchedEffect
 
-    LaunchedEffect(bulkPois, groups, styleReady.value) {
-        android.util.Log.d("MapComponent", "bulkPois LaunchedEffect fired: ${bulkPois.size} pois, styleReady=${styleReady.value}")
-        val map = mapState.value
-        if (map == null) {
-            android.util.Log.w("MapComponent", "bulkPois: mapState is null, skipping")
-            return@LaunchedEffect
-        }
-        if (!styleReady.value) {
-            android.util.Log.w("MapComponent", "bulkPois: style not ready, skipping")
-            return@LaunchedEffect
-        }
-        val style = map.style
-        if (style == null) {
-            android.util.Log.w("MapComponent", "bulkPois: map.style is null, skipping")
-            return@LaunchedEffect
-        }
-        val source = style.getSource("bulk-poi-source") as? GeoJsonSource
-        if (source == null) {
-            android.util.Log.w("MapComponent", "bulkPois: bulk-poi-source not found in style, skipping")
-            return@LaunchedEffect
-        }
-        android.util.Log.d("MapComponent", "bulkPois: source found, building features")
-
-        try {
-            // Register one square bitmap per unique icon key (keyed by individual POI icon)
-            val registered = mutableSetOf<String>()
-            bulkPois.forEach { poi ->
-                val resolvedIcon = poi.iconKey?.takeIf { it.isNotBlank() } ?: "marker"
-                val bitmapKey = "pin-bulk-$resolvedIcon"
-                if (registered.add(bitmapKey)) {
-                    val painter = allPainters[resolvedIcon] ?: placePainterFallback
-                    style.addImage(bitmapKey, createPoiSquare(resolvedIcon, painter, density, layoutDirection))
+        googlePlaces.asSequence()
+            .map { it.iconKey?.takeIf(String::isNotBlank) ?: "marker" }
+            .distinct()
+            .forEach { key ->
+                val imageId = "pin-google-$key"
+                if (style.getImage(imageId) == null) {
+                    val painter = allPainters[key] ?: placePainterFallback
+                    style.addImage(imageId, createPoiCircle(key, painter, density, layoutDirection))
                 }
             }
-
-            val features = bulkPois.map { poi ->
-                val resolvedIcon = poi.iconKey?.takeIf { it.isNotBlank() } ?: "marker"
-                val iconId = "pin-bulk-$resolvedIcon"
+        val features = withContext(Dispatchers.Default) {
+            googlePlaces.map { poi ->
+                val iconId = "pin-google-${poi.iconKey?.takeIf(String::isNotBlank) ?: "marker"}"
                 Feature.fromGeometry(
                     Point.fromLngLat(poi.lng, poi.lat),
                     null,
@@ -709,8 +610,82 @@ fun MapComponent(
                     addStringProperty("icon-id", iconId)
                 }
             }
+        }
+        source.setGeoJson(FeatureCollection.fromFeatures(features))
+        style.getLayer("google-places-symbols")?.setProperties(
+            PropertyFactory.visibility(if (googlePlaces.isEmpty()) Property.NONE else Property.VISIBLE)
+        )
+    }
+
+    LaunchedEffect(osmPois, styleReady.value) {
+        val map = mapState.value ?: return@LaunchedEffect
+        if (!styleReady.value) return@LaunchedEffect
+        val style = map.style ?: return@LaunchedEffect
+        val source = style.getSource("osm-poi-source") as? GeoJsonSource ?: return@LaunchedEffect
+
+        osmPois.asSequence()
+            .map { it.iconKey?.takeIf(String::isNotBlank) ?: "marker" }
+            .distinct()
+            .forEach { key ->
+                val imageId = "pin-osm-$key"
+                if (style.getImage(imageId) == null) {
+                    val painter = allPainters[key] ?: placePainterFallback
+                    style.addImage(imageId, createPoiHexagon(key, painter, density, layoutDirection))
+                }
+            }
+        val features = withContext(Dispatchers.Default) {
+            osmPois.map { poi ->
+                val iconId = "pin-osm-${poi.iconKey?.takeIf(String::isNotBlank) ?: "marker"}"
+                Feature.fromGeometry(
+                    Point.fromLngLat(poi.lng, poi.lat),
+                    null,
+                    poi.id,
+                ).apply {
+                    addStringProperty("poiId", poi.id)
+                    addStringProperty("icon-id", iconId)
+                }
+            }
+        }
+        source.setGeoJson(FeatureCollection.fromFeatures(features))
+        style.getLayer("osm-poi-symbols")?.setProperties(
+            PropertyFactory.visibility(if (osmPois.isEmpty()) Property.NONE else Property.VISIBLE)
+        )
+    }
+
+    LaunchedEffect(bulkPois, styleReady.value) {
+        val map = mapState.value ?: return@LaunchedEffect
+        if (!styleReady.value) return@LaunchedEffect
+        val style = map.style ?: return@LaunchedEffect
+        val source = style.getSource("bulk-poi-source") as? GeoJsonSource ?: return@LaunchedEffect
+
+        try {
+            // Register only missing images. Images remain cached for the lifetime of this style.
+            bulkPois.asSequence()
+                .map { it.iconKey?.takeIf(String::isNotBlank) ?: "marker" }
+                .distinct()
+                .forEach { resolvedIcon ->
+                val bitmapKey = "pin-bulk-$resolvedIcon"
+                if (style.getImage(bitmapKey) == null) {
+                    val painter = allPainters[resolvedIcon] ?: placePainterFallback
+                    style.addImage(bitmapKey, createPoiSquare(resolvedIcon, painter, density, layoutDirection))
+                }
+            }
+
+            val features = withContext(Dispatchers.Default) {
+                bulkPois.map { poi ->
+                    val resolvedIcon = poi.iconKey?.takeIf(String::isNotBlank) ?: "marker"
+                    val iconId = "pin-bulk-$resolvedIcon"
+                    Feature.fromGeometry(
+                        Point.fromLngLat(poi.lng, poi.lat),
+                        null,
+                        poi.id,
+                    ).apply {
+                        addStringProperty("poiId", poi.id)
+                        addStringProperty("icon-id", iconId)
+                    }
+                }
+            }
             source.setGeoJson(FeatureCollection.fromFeatures(features))
-            android.util.Log.d("MapComponent", "bulkPois: setGeoJson done with ${features.size} features")
         } catch (e: Exception) {
             android.util.Log.e("MapComponent", "bulkPois: exception in LaunchedEffect", e)
         }
@@ -824,8 +799,6 @@ fun MapComponent(
                         mapView = mapView,
                         lifecycleOwner = lifecycleOwner,
                         groupBitmaps = groupBitmaps,
-                        allIconKeys = allIconKeys,
-                        allPainters = allPainters,
                         placePainterFallback = placePainterFallback,
                         density = density,
                         layoutDirection = layoutDirection,
@@ -872,8 +845,6 @@ private fun setupMapStyle(
     mapView: MapView,
     lifecycleOwner: androidx.lifecycle.LifecycleOwner,
     groupBitmaps: Map<String, Bitmap>,
-    allIconKeys: List<String>,
-    allPainters: Map<String, Painter>,
     placePainterFallback: Painter,
     density: Density,
     layoutDirection: LayoutDirection,
@@ -1002,7 +973,7 @@ private fun setupMapStyle(
             PropertyFactory.iconImage(Expression.get("icon-id")),
             PropertyFactory.iconAllowOverlap(true),
             PropertyFactory.iconIgnorePlacement(true),
-            PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
+            PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
             PropertyFactory.iconOpacity(1f),
             PropertyFactory.iconSize(0.988f),
         )
@@ -1012,7 +983,7 @@ private fun setupMapStyle(
             PropertyFactory.iconImage(Expression.get("icon-id")),
             PropertyFactory.iconAllowOverlap(true),
             PropertyFactory.iconIgnorePlacement(true),
-            PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
+            PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
             PropertyFactory.iconOpacity(1f),
             PropertyFactory.iconSize(0.806f),
         )
@@ -1022,7 +993,7 @@ private fun setupMapStyle(
             PropertyFactory.iconImage(Expression.get("icon-id")),
             PropertyFactory.iconAllowOverlap(true),
             PropertyFactory.iconIgnorePlacement(true),
-            PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
+            PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
             PropertyFactory.iconOpacity(1f),
             PropertyFactory.iconSize(0.806f),
         )
@@ -1050,11 +1021,7 @@ private fun setupMapStyle(
 
     // --- POI pin images ---
     groupBitmaps.forEach { (id, bitmap) -> style.addImage("pin-$id", bitmap) }
-    allIconKeys.forEach { key ->
-        val painter = allPainters[key] ?: placePainterFallback
-        style.addImage("pin-google-$key", createPoiCircle(key, painter, density, layoutDirection))
-        style.addImage("pin-osm-$key", createPoiCircle(key, painter, density, layoutDirection))
-    }
+    // Remote/imported POI images are registered lazily as their data arrives.
     // Distinct red pin used for the search preview marker
     style.addImage("pin-search-preview", createPoiPin("#F44336", placePainterFallback, density, layoutDirection))
 

@@ -195,43 +195,48 @@ private fun desaturateColor(color: Int, factor: Float = 0.75f): Int {
     return Color.HSVToColor(hsv)
 }
 
-/**
- * Creates a square bitmap of [size]×[size] with a rounded-rect background coloured from
- * [ICON_BG_COLORS], matching the style of [createCircleIcon] but square.
- * Corner radius is ~20% of size for a "squircle" look.
- */
+private fun pinCanvas(iconKey: String, size: Int): Triple<Bitmap, Canvas, Paint> {
+    val height = (size * 1.30f).toInt()
+    val bitmap = Bitmap.createBitmap(size, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = desaturateColor(ICON_BG_COLORS[iconKey] ?: DEFAULT_BG)
+        style = Paint.Style.FILL
+    }
+
+    // All marker variants share a sharp bottom point. The wider top remains source-specific.
+    val tail = Path().apply {
+        moveTo(size * 0.22f, size * 0.64f)
+        lineTo(size / 2f, height.toFloat())
+        lineTo(size * 0.78f, size * 0.64f)
+        close()
+    }
+    canvas.drawPath(tail, paint)
+    return Triple(bitmap, canvas, paint)
+}
+
+/** Creates a rounded-square-head pin for imported POIs. */
 fun createSquareIcon(
     iconKey: String,
     size: Int = 80,
 ): Bitmap {
-    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
+    val (bitmap, canvas, bgPaint) = pinCanvas(iconKey, size)
     val cornerRadius = size * 0.20f
-    val bgColor = desaturateColor(ICON_BG_COLORS[iconKey] ?: DEFAULT_BG)
-    val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = bgColor
-        style = Paint.Style.FILL
-    }
-    canvas.drawRoundRect(RectF(0f, 0f, size.toFloat(), size.toFloat()), cornerRadius, cornerRadius, bgPaint)
+    canvas.drawRoundRect(
+        RectF(1f, 1f, size - 1f, size - 1f),
+        cornerRadius,
+        cornerRadius,
+        bgPaint,
+    )
     return bitmap
 }
 
-/**
- * Creates a square bitmap of [size]×[size] with a hexagon background coloured from
- * [ICON_BG_COLORS]. Used for OSM POI markers.
- * The white icon is drawn on top by [createPoiHexagon] in MapComponent.
- */
+/** Creates a hexagonal-head pin for OSM POIs. */
 fun createHexagonIcon(
     iconKey: String,
     size: Int = 80,
 ): Bitmap {
-    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-    val bgColor = desaturateColor(ICON_BG_COLORS[iconKey] ?: DEFAULT_BG)
-    val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = bgColor
-        style = Paint.Style.FILL
-    }
+    val (bitmap, canvas, bgPaint) = pinCanvas(iconKey, size)
     val cx = size / 2f
     val cy = size / 2f
     val r = size / 2f - 1f
@@ -247,23 +252,13 @@ fun createHexagonIcon(
     return bitmap
 }
 
-/**
- * Creates a square bitmap of [size]×[size] showing a filled circle with
- * background colour from [ICON_BG_COLORS] keyed by [iconKey].
- * The white icon is drawn on top by the Compose-side helper [createPoiCircle] in MapComponent.
- */
+/** Creates a circular-head pin for Google Places and circular personal groups. */
 fun createCircleIcon(
     iconKey: String,
     size: Int = 80,
 ): Bitmap {
-    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
+    val (bitmap, canvas, bgPaint) = pinCanvas(iconKey, size)
     val cx = size / 2f
-    val bgColor = desaturateColor(ICON_BG_COLORS[iconKey] ?: DEFAULT_BG)
-    val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = bgColor
-        style = Paint.Style.FILL
-    }
     canvas.drawCircle(cx, cx, cx - 1f, bgPaint)
     return bitmap
 }

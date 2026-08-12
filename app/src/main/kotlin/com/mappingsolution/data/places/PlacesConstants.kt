@@ -56,22 +56,39 @@ const val OSM_POI_GROUP_ID = "osm-poi-group"
 const val NEARBY_POI_MIN_ZOOM = 8.0
 
 const val GOOGLE_PLACES_FETCH_DEBOUNCE_MS = 300L
-const val GOOGLE_PLACES_MAX_RESULTS = 20     // Google POIs shown per viewport
-const val OSM_POI_MAX_RESULTS = 20           // OSM POIs shown per viewport
+const val GOOGLE_PLACES_MAX_RESULTS = 10
+const val OSM_POI_MAX_RESULTS = 20
 const val BULK_POI_MAX_RESULTS = 30          // Imported (bulk) POIs shown per viewport
 const val GOOGLE_PLACES_CACHE_TTL_MS = 7L * 24 * 60 * 60 * 1000   // 7 days
 const val GOOGLE_PLACES_FIELD_MASK = "places.id,places.displayName,places.location,places.types"
 
 val GOOGLE_PLACES_INCLUDED_TYPES = listOf(
+    // Food and drink
     "restaurant", "cafe", "bar", "bakery", "fast_food_restaurant", "coffee_shop",
-    "bank", "atm",
-    "pharmacy", "hospital",
-    "supermarket", "shopping_mall", "convenience_store",
-    "hotel", "lodging",
+    // Fuel
     "gas_station",
-    "gym", "beauty_salon",
+    // Culture and history
+    "art_gallery", "art_museum", "art_studio", "auditorium", "castle",
+    "cultural_landmark", "fountain", "historical_place", "history_museum",
+    "monument", "museum", "performing_arts_theater", "sculpture",
+    // Attractions, wildlife, and notable nature
+    "aquarium", "botanical_garden", "historical_landmark", "national_park",
+    "observation_deck", "planetarium", "scenic_spot", "state_park",
+    "tourist_attraction", "wildlife_park", "wildlife_refuge", "zoo",
+    // Places of worship
+    "buddhist_temple", "church", "hindu_temple", "mosque", "shinto_shrine", "synagogue",
 )
+
+fun isGoogleDiscoveryType(types: List<String>): Boolean =
+    types.any { it in GOOGLE_PLACES_INCLUDED_TYPES }
 
 const val OSM_FETCH_DEBOUNCE_MS = 300L
 const val OSM_CACHE_TTL_MS = 30L * 24 * 60 * 60 * 1000   // 30 days
+
+/** Google density grows with zoom; other POI sources are not capped here. */
+fun googlePoiLimitForZoom(zoom: Double): Int = when {
+    zoom < 10.0 -> 3
+    zoom < 13.0 -> 6
+    else -> GOOGLE_PLACES_MAX_RESULTS
+}
 

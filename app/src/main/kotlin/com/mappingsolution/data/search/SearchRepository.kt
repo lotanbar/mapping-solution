@@ -6,6 +6,7 @@ import com.mappingsolution.data.fs.PoiFileRepository
 import com.mappingsolution.data.model.SearchResult
 import com.mappingsolution.data.places.OsmApiService
 import com.mappingsolution.data.places.PlacesApiService
+import com.mappingsolution.data.prefs.GooglePoiCategoryPreference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -21,6 +22,7 @@ class SearchRepository @Inject constructor(
     private val groupFileRepository: GroupFileRepository,
     private val placesApiService: PlacesApiService,
     private val osmApiService: OsmApiService,
+    private val googlePoiCategoryPreference: GooglePoiCategoryPreference,
 ) {
 
     /**
@@ -76,8 +78,15 @@ class SearchRepository @Inject constructor(
 
         val google = async(Dispatchers.IO) {
             if (skipRemote) return@async emptyList()
+            val showDiscovery = googlePoiCategoryPreference.showDiscovery.value
+            val showOther = googlePoiCategoryPreference.showOther.value
+            if (!showDiscovery && !showOther) return@async emptyList()
             try {
-                placesApiService.searchText(q, userLat, userLng)
+                placesApiService.searchText(
+                    q, userLat, userLng,
+                    showDiscovery = showDiscovery,
+                    showOther = showOther,
+                )
                     .map { SearchResult.GooglePlace(it) }
             } catch (e: CancellationException) {
                 throw e

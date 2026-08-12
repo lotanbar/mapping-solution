@@ -2,6 +2,7 @@ package com.mappingsolution.data.places
 
 import android.util.Log
 import com.mappingsolution.data.model.Poi
+import com.mappingsolution.data.prefs.GooglePoiCategoryPreference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,6 +21,7 @@ private const val QUOTA_RESET_WINDOW_MS = 24L * 60 * 60 * 1000   // 24 h circuit
 class GooglePlacesRepository @Inject constructor(
     private val api: PlacesApiService,
     private val cache: GooglePlacesCache,
+    private val categoryPreference: GooglePoiCategoryPreference,
 ) {
 
     private val _pois = MutableStateFlow<List<Poi>>(emptyList())
@@ -90,6 +92,12 @@ class GooglePlacesRepository @Inject constructor(
         zoom: Double,
     ) = withContext(Dispatchers.IO) {
         Log.d("GooglePlacesRepo", "refreshForViewport: zoom=$zoom N=$north S=$south E=$east W=$west")
+        val showDiscovery = categoryPreference.showDiscovery.value
+        val showOther = categoryPreference.showOther.value
+        if (!showDiscovery && !showOther) {
+            clear()
+            return@withContext
+        }
         // Circuit breaker: stop all calls while quota is exhausted.
         if (System.currentTimeMillis() < quotaExhaustedUntil) {
             Log.w("GooglePlacesRepo", "Quota exhausted — skipping fetch until reset")
@@ -97,28 +105,32 @@ class GooglePlacesRepository @Inject constructor(
         }
         try {
             _isLoading.value = true
+            val displayLimit = googlePoiLimitForZoom(zoom)
 
-            // Zoom-out by more than 1 level: discard high-zoom POIs so the user sees a clean low-zoom fetch.
+            // Any meaningful zoom-out replaces the detailed set instead of preserving it.
             val prevZoom = lastFetchedZoom
-            if (prevZoom != null && zoom < prevZoom - 1.0) {
+            val zoomedOut = prevZoom != null && zoom < prevZoom - 0.15
+            if (zoomedOut) {
                 android.util.Log.d("GooglePlacesRepo", "refreshForViewport: zoom decreased from $prevZoom → $zoom, clearing POIs")
                 _pois.value = emptyList()
                 lastFetchedBounds = null
             }
             val centerLat = (north + south) / 2.0
             val centerLng = (east + west) / 2.0
-            val cacheKey = "%.2f_%.2f".format(centerLat, centerLng)
+            val cacheKey = "%.2f_%.2f_%s".format(centerLat, centerLng, categoryPreference.modeKey())
             val currentBounds = FetchedBounds(north, south, east, west)
-            val prevBounds = lastFetchedBounds
+            val prevBounds = if (zoomedOut) null else lastFetchedBounds
 
             val cached = cache.load(cacheKey)
             val cachedInView = cached
                 ?.filter { it.lat in south..north && it.lng in west..east }
                 ?: emptyList()
 
-            val remaining = maxOf(0, GOOGLE_PLACES_MAX_RESULTS - cachedInView.size)
+            // A zoom-out must fetch popularity-ranked results for the new, wider area.
+            val rankedCached = if (zoomedOut) emptyList() else cachedInView.take(displayLimit)
+            val remaining = maxOf(0, displayLimit - rankedCached.size)
             if (remaining == 0) {
-                _pois.value = mergeWithExisting(cachedInView, south, north, east, west)
+                _pois.value = rankedCached
                 lastFetchedBounds = currentBounds
                 lastFetchedZoom = zoom
                 return@withContext
@@ -128,15 +140,17 @@ class GooglePlacesRepository @Inject constructor(
             val strips = computeNewStrips(currentBounds, prevBounds)
             Log.d("GooglePlacesRepo", "strips to fetch: ${strips.size} (prevBounds=$prevBounds)")
             if (strips.isEmpty()) {
-                _pois.value = mergeWithExisting(cachedInView, south, north, east, west)
+                _pois.value = if (zoomedOut) rankedCached else
+                    mergeWithExisting(rankedCached, south, north, east, west).take(displayLimit)
                 lastFetchedBounds = currentBounds
                 lastFetchedZoom = zoom
                 return@withContext
             }
 
             // Distribute remaining quota evenly across strips; each strip → one API call (max 20).
-            val existingInViewport = _pois.value.filter { it.lat in south..north && it.lng in west..east }
-            val quota = maxOf(0, GOOGLE_PLACES_MAX_RESULTS - existingInViewport.size)
+            val existingInViewport = if (zoomedOut) emptyList() else
+                _pois.value.filter { it.lat in south..north && it.lng in west..east }
+            val quota = maxOf(0, displayLimit - existingInViewport.size)
             val maxPerStrip = minOf(20, ceil(quota.toDouble() / strips.size).toInt())
 
             Log.d("GooglePlacesRepo", "quota=$quota maxPerStrip=$maxPerStrip existingInViewport=${existingInViewport.size}")
@@ -154,7 +168,11 @@ class GooglePlacesRepository @Inject constructor(
                     try {
                         val cappedRadius = radiusMeters.coerceAtMost(50_000.0)
                         Log.d("GooglePlacesRepo", "fetching strip center=(${stripCenterLat},${stripCenterLng}) radius=$cappedRadius")
-                        allStripPois += api.fetchNearby(stripCenterLat, stripCenterLng, cappedRadius, maxPerStrip)
+                        allStripPois += api.fetchNearby(
+                            stripCenterLat, stripCenterLng, cappedRadius, maxPerStrip,
+                            showDiscovery = showDiscovery,
+                            showOther = showOther,
+                        )
                     } catch (e: QuotaExceededException) {
                         Log.w("GooglePlacesRepo", "Quota exhausted — activating circuit breaker for 24 h")
                         quotaExhaustedUntil = System.currentTimeMillis() + QUOTA_RESET_WINDOW_MS
@@ -167,18 +185,22 @@ class GooglePlacesRepository @Inject constructor(
             }
 
             // Deduplicate: cached + existing in-viewport + freshly fetched strip POIs.
-            val combined = (
-                (cached ?: emptyList()).associateBy { it.id } +
-                existingInViewport.associateBy { it.id } +
-                allStripPois.associateBy { it.id }
-            ).values.toList()
+            val combined = if (zoomedOut) {
+                (allStripPois.associateBy { it.id } +
+                    (cached ?: emptyList()).associateBy { it.id }).values.toList()
+            } else {
+                ((cached ?: emptyList()).associateBy { it.id } +
+                    existingInViewport.associateBy { it.id } +
+                    allStripPois.associateBy { it.id }).values.toList()
+            }
 
             Log.d("GooglePlacesRepo", "fetch complete: ${allStripPois.size} new POIs, combined=${combined.size}, inViewport=${combined.count { it.lat in south..north && it.lng in west..east }}")
             cache.store(cacheKey, combined)
-            _pois.value = mergeWithExisting(
-                combined.filter { it.lat in south..north && it.lng in west..east },
-                south, north, east, west,
-            )
+            val rankedInView = combined
+                .filter { it.lat in south..north && it.lng in west..east }
+                .take(displayLimit)
+            _pois.value = if (zoomedOut) rankedInView else
+                mergeWithExisting(rankedInView, south, north, east, west).take(displayLimit)
             lastFetchedBounds = currentBounds
             lastFetchedZoom = zoom
         } finally {

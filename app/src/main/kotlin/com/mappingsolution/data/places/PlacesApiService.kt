@@ -28,6 +28,8 @@ class PlacesApiService @Inject constructor(private val httpClient: OkHttpClient)
         lng: Double,
         radiusMeters: Double,
         maxCount: Int,
+        showDiscovery: Boolean = true,
+        showOther: Boolean = false,
     ): List<Poi> {
         val apiKey = BuildConfig.GOOGLE_PLACES_API_KEY
         if (apiKey.isBlank()) {
@@ -37,8 +39,14 @@ class PlacesApiService @Inject constructor(private val httpClient: OkHttpClient)
         Log.d("PlacesApiService", "fetchNearby: key=${apiKey.take(8)}… lat=$lat lng=$lng radius=$radiusMeters max=$maxCount")
         val effectiveMax = maxCount
         val body = JSONObject().apply {
-            put("includedTypes", org.json.JSONArray(GOOGLE_PLACES_INCLUDED_TYPES))
+            when {
+                showDiscovery && !showOther ->
+                    put("includedTypes", org.json.JSONArray(GOOGLE_PLACES_INCLUDED_TYPES))
+                !showDiscovery && showOther ->
+                    put("excludedTypes", org.json.JSONArray(GOOGLE_PLACES_INCLUDED_TYPES))
+            }
             put("maxResultCount", effectiveMax)
+            put("rankPreference", "POPULARITY")
             put("locationRestriction", JSONObject().apply {
                 put("circle", JSONObject().apply {
                     put("center", JSONObject().apply {
@@ -110,6 +118,8 @@ class PlacesApiService @Inject constructor(private val httpClient: OkHttpClient)
         biasLat: Double,
         biasLng: Double,
         radiusMeters: Double = 5000.0,
+        showDiscovery: Boolean = true,
+        showOther: Boolean = true,
     ): List<Poi> {
         val apiKey = BuildConfig.GOOGLE_PLACES_API_KEY
         if (apiKey.isBlank()) {
@@ -155,6 +165,10 @@ class PlacesApiService @Inject constructor(private val httpClient: OkHttpClient)
                         val types = if (typesArray != null) {
                             (0 until typesArray.length()).map { typesArray.getString(it) }
                         } else emptyList()
+                        val isDiscovery = isGoogleDiscoveryType(types)
+                        if ((isDiscovery && !showDiscovery) || (!isDiscovery && !showOther)) {
+                            return@runCatching null
+                        }
                         val resolvedIconKey = PoiIconResolver.resolveForGoogleType(types, name)
                         Poi(
                             id = place.getString("id"),

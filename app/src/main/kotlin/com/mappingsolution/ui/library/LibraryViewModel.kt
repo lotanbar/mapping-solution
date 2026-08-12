@@ -30,6 +30,7 @@ import com.mappingsolution.data.places.GOOGLE_PLACES_GROUP_ID
 import com.mappingsolution.data.places.GooglePlacesRepository
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.data.places.OsmPoiRepository
+import com.mappingsolution.data.prefs.GooglePoiCategoryPreference
 import com.mappingsolution.service.ImportWorker
 import com.mappingsolution.service.MbtilesImportWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -78,6 +79,7 @@ class LibraryViewModel @Inject constructor(
     private val bulkPoiRepository: BulkPoiRepository,
     private val mapLayersState: MapLayersState,
     private val rasterLayerRepository: RasterLayerRepository,
+    private val googlePoiCategoryPreference: GooglePoiCategoryPreference,
 ) : ViewModel() {
 
     private val workManager = WorkManager.getInstance(context)
@@ -86,10 +88,20 @@ class LibraryViewModel @Inject constructor(
 
     val mapStyle: StateFlow<MapStyle> = mapLayersState.mapStyle
     val hillshadeVisible: StateFlow<Boolean> = mapLayersState.hillshadeVisible
+    val showGoogleDiscovery: StateFlow<Boolean> = googlePoiCategoryPreference.showDiscovery
+    val showGoogleOther: StateFlow<Boolean> = googlePoiCategoryPreference.showOther
     val rasterLayers: StateFlow<List<RasterLayer>> = mapLayersState.rasterLayers
 
     fun setMapStyle(style: MapStyle) = mapLayersState.setMapStyle(style)
     fun toggleHillshade() = mapLayersState.setHillshadeVisible(!mapLayersState.hillshadeVisible.value)
+    fun toggleGoogleDiscovery() {
+        googlePoiCategoryPreference.setShowDiscovery(!showGoogleDiscovery.value)
+        googlePlacesRepository.clear()
+    }
+    fun toggleGoogleOther() {
+        googlePoiCategoryPreference.setShowOther(!showGoogleOther.value)
+        googlePlacesRepository.clear()
+    }
     fun toggleRasterLayerVisibility(id: String) = mapLayersState.toggleRasterLayerVisibility(id)
     fun deleteSelectedRasterLayers() {
         val ids = (_selectionMode.value as? LibrarySelectionMode.RasterLayerSelection)?.selectedIds ?: return
