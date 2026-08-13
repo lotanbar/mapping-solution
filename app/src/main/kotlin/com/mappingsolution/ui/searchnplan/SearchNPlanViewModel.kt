@@ -10,7 +10,6 @@ import com.mappingsolution.data.model.DestinationSource
 import com.mappingsolution.data.model.Plan
 import com.mappingsolution.data.model.PlanDestination
 import com.mappingsolution.data.model.SearchResult
-import com.mappingsolution.data.places.GooglePlacesRepository
 import com.mappingsolution.data.places.OsmPoiRepository
 import com.mappingsolution.data.search.SearchRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -35,7 +34,6 @@ class SearchNPlanViewModel @Inject constructor(
     private val mapHolder: MapHolder,
     private val searchPreviewState: SearchPreviewState,
     private val osmPoiRepository: OsmPoiRepository,
-    private val googlePlacesRepository: GooglePlacesRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -105,9 +103,6 @@ class SearchNPlanViewModel @Inject constructor(
                     osmPoiRepository.registerSearchPois(
                         results.filterIsInstance<SearchResult.OsmPoi>().map { it.poi }
                     )
-                    googlePlacesRepository.registerSearchPois(
-                        results.filterIsInstance<SearchResult.GooglePlace>().map { it.poi }
-                    )
                 } finally {
                     isLoading.value = false
                 }
@@ -139,7 +134,6 @@ class SearchNPlanViewModel @Inject constructor(
             is SearchResult.PersonalPoi -> DestinationSource.PERSONAL
             is SearchResult.ImportedPoi -> DestinationSource.IMPORTED
             is SearchResult.OsmPoi -> DestinationSource.OSM
-            is SearchResult.GooglePlace -> DestinationSource.GOOGLE
         }
         val dest = PlanDestination(
             sourceType = source,

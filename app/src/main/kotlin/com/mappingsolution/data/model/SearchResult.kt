@@ -5,5 +5,4 @@ sealed class SearchResult {
     data class PersonalPoi(override val poi: Poi) : SearchResult()
     data class ImportedPoi(override val poi: Poi) : SearchResult()
     data class OsmPoi(override val poi: Poi) : SearchResult()
-    data class GooglePlace(override val poi: Poi) : SearchResult()
 }

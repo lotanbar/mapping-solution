@@ -29,11 +29,6 @@ android {
             "MAPTILER_API_KEY",
             "\"${localProperties.getProperty("MAPTILER_API_KEY", "uibCuK5qN9WReQo07MMt")}\""
         )
-        buildConfigField(
-            "String",
-            "GOOGLE_PLACES_API_KEY",
-            "\"${localProperties.getProperty("GOOGLE_PLACES_API_KEY", "AIzaSyCrxRLzakgDKJwzlbAkdkikIdrH5C4p5EY")}\""
-        )
     }
 
     buildTypes {

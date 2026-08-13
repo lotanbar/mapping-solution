@@ -51,7 +51,10 @@ class MappingApplication : Application(), Configuration.Provider {
                         .addInterceptor(Interceptor { chain ->
                             chain.proceed(
                                 chain.request().newBuilder()
-                                    .header("User-Agent", "mapping-solution/1.0 (Android)")
+                                    .header(
+                                        "User-Agent",
+                                        "mapping-solution/1.0 (https://github.com/lotanbar/mapping-solution)",
+                                    )
                                     .build()
                             )
                         })

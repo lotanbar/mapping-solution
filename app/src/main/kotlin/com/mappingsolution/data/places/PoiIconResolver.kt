@@ -6,10 +6,9 @@ package com.mappingsolution.data.places
  * Icon keys are Maki icon names (hyphen-separated, e.g. "fast-food", "place-of-worship").
  * Every public function returns a non-null key; the fallback is "marker".
  *
- * Three public entry points:
- *  - [resolveForGoogleType]  — Google Places type list
- *  - [resolveForOsmTags]     — full OSM tags map
- *  - [resolveForImported]    — GPX waypoint (type string + name + description)
+ * Two public entry points:
+ *  - [resolveForOsmTags]  — full OSM tags map
+ *  - [resolveForImported] — GPX waypoint (type string + name + description)
  */
 object PoiIconResolver {
 
@@ -234,118 +233,6 @@ object PoiIconResolver {
         "hindu"             to "religious-shinto",   // closest available
         "sikh"              to "place-of-worship",
         "bahai"             to "place-of-worship",
-    )
-
-    // ── Google Places type → OSM tags ────────────────────────────────────────
-
-    private val GOOGLE_TO_OSM: Map<String, Map<String, String>> = mapOf(
-        "restaurant"                        to mapOf("amenity" to "restaurant"),
-        "cafe"                              to mapOf("amenity" to "cafe"),
-        "coffee_shop"                       to mapOf("amenity" to "cafe"),
-        "tea_house"                         to mapOf("amenity" to "cafe"),
-        "bar"                               to mapOf("amenity" to "bar"),
-        "pub"                               to mapOf("amenity" to "pub"),
-        "brewery"                           to mapOf("amenity" to "bar"),
-        "wine_bar"                          to mapOf("amenity" to "bar"),
-        "bakery"                            to mapOf("amenity" to "bakery"),
-        "fast_food_restaurant"              to mapOf("amenity" to "fast_food"),
-        "sandwich_shop"                     to mapOf("amenity" to "fast_food"),
-        "pizza_restaurant"                  to mapOf("amenity" to "fast_food"),
-        "ice_cream_shop"                    to mapOf("amenity" to "ice_cream"),
-        "dessert_shop"                      to mapOf("amenity" to "confectionery"),
-        "confectionery"                     to mapOf("amenity" to "confectionery"),
-        "bank"                              to mapOf("amenity" to "bank"),
-        "atm"                               to mapOf("amenity" to "atm"),
-        "pharmacy"                          to mapOf("amenity" to "pharmacy"),
-        "hospital"                          to mapOf("amenity" to "hospital"),
-        "doctor"                            to mapOf("amenity" to "doctors"),
-        "dentist"                           to mapOf("amenity" to "dentist"),
-        "veterinary_care"                   to mapOf("amenity" to "veterinary"),
-        "supermarket"                       to mapOf("amenity" to "supermarket"),
-        "grocery_store"                     to mapOf("shop" to "grocery"),
-        "convenience_store"                 to mapOf("shop" to "convenience"),
-        "shopping_mall"                     to mapOf("shop" to "clothes"),
-        "clothing_store"                    to mapOf("shop" to "clothes"),
-        "book_store"                        to mapOf("shop" to "books"),
-        "electronics_store"                 to mapOf("shop" to "electronics"),
-        "hardware_store"                    to mapOf("shop" to "hardware"),
-        "furniture_store"                   to mapOf("shop" to "furniture"),
-        "florist"                           to mapOf("shop" to "florist"),
-        "jewelry_store"                     to mapOf("shop" to "jewelry"),
-        "hotel"                             to mapOf("tourism" to "hotel"),
-        "lodging"                           to mapOf("tourism" to "hotel"),
-        "hostel"                            to mapOf("tourism" to "hostel"),
-        "campground"                        to mapOf("tourism" to "camp_site"),
-        "gas_station"                       to mapOf("amenity" to "fuel"),
-        "electric_vehicle_charging_station" to mapOf("amenity" to "charging_station"),
-        "parking"                           to mapOf("amenity" to "parking"),
-        "gym"                               to mapOf("leisure" to "fitness_centre"),
-        "beauty_salon"                      to mapOf("shop" to "beauty"),
-        "hair_salon"                        to mapOf("shop" to "hairdresser"),
-        "spa"                               to mapOf("leisure" to "spa"),
-        "movie_theater"                     to mapOf("amenity" to "cinema"),
-        "night_club"                        to mapOf("amenity" to "nightclub"),
-        "casino"                            to mapOf("amenity" to "casino"),
-        "museum"                            to mapOf("tourism" to "museum"),
-        "art_museum"                        to mapOf("tourism" to "museum"),
-        "history_museum"                    to mapOf("tourism" to "museum"),
-        "art_gallery"                       to mapOf("tourism" to "gallery"),
-        "art_studio"                        to mapOf("tourism" to "gallery"),
-        "auditorium"                        to mapOf("amenity" to "theatre"),
-        "performing_arts_theater"           to mapOf("amenity" to "theatre"),
-        "castle"                            to mapOf("historic" to "castle"),
-        "cultural_landmark"                 to mapOf("historic" to "monument"),
-        "historical_place"                  to mapOf("historic" to "archaeological_site"),
-        "fountain"                          to mapOf("natural" to "water"),
-        "sculpture"                         to mapOf("historic" to "monument"),
-        "library"                           to mapOf("amenity" to "library"),
-        "park"                              to mapOf("leisure" to "park"),
-        "national_park"                     to mapOf("leisure" to "nature_reserve"),
-        "state_park"                        to mapOf("leisure" to "nature_reserve"),
-        "scenic_spot"                       to mapOf("tourism" to "viewpoint"),
-        "botanical_garden"                  to mapOf("leisure" to "garden"),
-        "wildlife_park"                     to mapOf("tourism" to "zoo"),
-        "wildlife_refuge"                   to mapOf("leisure" to "nature_reserve"),
-        "zoo"                               to mapOf("tourism" to "zoo"),
-        "aquarium"                          to mapOf("tourism" to "aquarium"),
-        "amusement_park"                    to mapOf("tourism" to "theme_park"),
-        "tourist_attraction"                to mapOf("tourism" to "attraction"),
-        "observation_deck"                  to mapOf("man_made" to "tower"),
-        "planetarium"                       to mapOf("amenity" to "observatory"),
-        "stadium"                           to mapOf("leisure" to "stadium"),
-        "sports_complex"                    to mapOf("leisure" to "stadium"),
-        "sports_club"                       to mapOf("leisure" to "sports_centre"),
-        "golf_course"                       to mapOf("leisure" to "golf_course"),
-        "bowling_alley"                     to mapOf("leisure" to "bowling_alley"),
-        "school"                            to mapOf("amenity" to "school"),
-        "university"                        to mapOf("amenity" to "university"),
-        "airport"                           to mapOf("aeroway" to "aerodrome"),
-        "train_station"                     to mapOf("railway" to "station"),
-        "subway_station"                    to mapOf("railway" to "station"),
-        "bus_station"                       to mapOf("amenity" to "bus_station"),
-        "ferry_terminal"                    to mapOf("amenity" to "ferry_terminal"),
-        "marina"                            to mapOf("leisure" to "marina"),
-        "police"                            to mapOf("amenity" to "police"),
-        "fire_station"                      to mapOf("amenity" to "fire_station"),
-        "church"                            to mapOf("amenity" to "place_of_worship", "religion" to "christian"),
-        "mosque"                            to mapOf("amenity" to "place_of_worship", "religion" to "muslim"),
-        "synagogue"                         to mapOf("amenity" to "place_of_worship", "religion" to "jewish"),
-        "hindu_temple"                      to mapOf("amenity" to "place_of_worship", "religion" to "hindu"),
-        "buddhist_temple"                   to mapOf("amenity" to "place_of_worship", "religion" to "buddhist"),
-        "shinto_shrine"                     to mapOf("amenity" to "place_of_worship", "religion" to "shinto"),
-        "place_of_worship"                  to mapOf("amenity" to "place_of_worship"),
-        "cemetery"                          to mapOf("historic" to "tomb"),
-        "monument"                          to mapOf("historic" to "monument"),
-        "historical_landmark"               to mapOf("historic" to "memorial"),
-        "car_dealer"                        to mapOf("shop" to "car"),
-        "car_rental"                        to mapOf("amenity" to "car_rental"),
-        "car_repair"                        to mapOf("shop" to "car_repair"),
-        "laundry"                           to mapOf("amenity" to "laundry"),
-        "post_office"                       to mapOf("amenity" to "post_office"),
-        "real_estate_agency"                to mapOf("shop" to "estate_agent"),
-        "accounting"                        to mapOf("shop" to "financial"),
-        "lawyer"                            to mapOf("shop" to "financial"),
-        "insurance_agency"                  to mapOf("shop" to "financial"),
     )
 
     // ── Keyword tables → OSM tag pairs ────────────────────────────────────────
@@ -797,20 +684,6 @@ object PoiIconResolver {
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
-
-    /**
-     * Resolves an icon key from a Google Places type list.
-     *
-     * [name] is checked against the keyword tables first (highest confidence);
-     * Google's type list is used as fallback only.
-     */
-    fun resolveForGoogleType(types: List<String>, name: String = ""): String {
-        if (name.isNotBlank()) matchKeywords(normalize(name))?.let { return resolveTagMap(it) }
-        for (type in types) {
-            GOOGLE_TO_OSM[type]?.let { return resolveTagMap(it) }
-        }
-        return "marker"
-    }
 
     /**
      * Resolves an icon key from a full OSM tags map.

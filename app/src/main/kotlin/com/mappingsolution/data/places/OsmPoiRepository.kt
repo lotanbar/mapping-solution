@@ -20,6 +20,7 @@ import javax.inject.Singleton
 class OsmPoiRepository @Inject constructor(
     private val api: OsmApiService,
     private val cache: OsmPoiCache,
+    private val wikimediaRepository: WikimediaRepository,
 ) {
 
     private val _pois = MutableStateFlow<List<Poi>>(emptyList())
@@ -33,10 +34,10 @@ class OsmPoiRepository @Inject constructor(
 
     fun getById(id: String): Poi? = _pois.value.find { it.id == id }
 
-    /** Resolves and returns the image URL for an OSM POI's wikiRef, or null if none. */
-    suspend fun fetchImageUrl(id: String): String? = withContext(Dispatchers.IO) {
+    /** Resolves reusable Wikimedia image/summary metadata for an OSM POI. */
+    suspend fun fetchWikimediaContent(id: String): WikimediaContent? = withContext(Dispatchers.IO) {
         val ref = getById(id)?.wikiRef ?: return@withContext null
-        api.resolveImageUrl(ref)
+        wikimediaRepository.getContent(ref)
     }
 
     /** Merges POIs returned from a text search so the detail screen can look them up by ID. */
@@ -197,21 +198,16 @@ class OsmPoiRepository @Inject constructor(
     }
 
     /**
-     * At broad views, a Wikipedia/Wikidata/image reference is our best free notability signal.
-     * More categories progressively appear while zooming in; nothing is capped at street level.
+     * A Wikipedia/Wikidata/image reference is our best free notability signal. Spatial thinning
+     * prevents overlapping markers before the zoom-specific cap is applied.
      */
-    private fun selectForZoom(pois: List<Poi>, zoom: Double): List<Poi> = when {
-        zoom < 12.0 -> spatiallyThin(
-            pois.filterNot { it.iconKey in EVERYDAY_ICON_KEYS },
-            zoom,
-        )
-        zoom < 13.0 -> pois.filterNot { it.iconKey in EVERYDAY_ICON_KEYS }
-        else -> pois
-    }.sortedByDescending { it.wikiRef != null }
+    private fun selectForZoom(pois: List<Poi>, zoom: Double): List<Poi> = spatiallyThin(pois, zoom).sortedWith(
+        compareByDescending<Poi> { it.wikiRef != null }
+            .thenByDescending { LANDMARK_PRIORITY[it.iconKey] ?: 0 }
+    ).take(osmPoiLimitForZoom(zoom))
 
     private fun spatiallyThin(pois: List<Poi>, zoom: Double): List<Poi> {
-        // About one marker per 56 screen pixels. This prevents overlap without imposing
-        // an arbitrary total cap, and still leaves sparse viewports populated.
+        // About one marker per 56 screen pixels, while still leaving sparse views populated.
         val cellDegrees = (360.0 / 2.0.pow(zoom)) * (56.0 / 256.0)
         return pois
             .sortedWith(compareByDescending<Poi> { it.wikiRef != null }
@@ -229,11 +225,6 @@ class OsmPoiRepository @Inject constructor(
     }
 
     private companion object {
-        val EVERYDAY_ICON_KEYS = setOf(
-            "fuel", "restaurant", "cafe", "fast-food", "bar",
-            "religious-muslim", "religious-jewish", "religious-christian",
-            "religious-buddhist", "place-of-worship",
-        )
         val LANDMARK_PRIORITY = mapOf(
             "museum" to 10,
             "attraction" to 9,

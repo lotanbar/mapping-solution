@@ -9,7 +9,6 @@ import com.mappingsolution.data.fs.GroupFileRepository
 import com.mappingsolution.data.fs.PoiFileRepository
 import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.GroupType
-import com.mappingsolution.data.places.GOOGLE_PLACES_GROUP_ID
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.util.AppFileLogger
@@ -61,7 +60,6 @@ class PoiFormViewModel @Inject constructor(
             groups.filter {
                 it.type == GroupType.POI &&
                 !it.isBulk &&
-                it.id != GOOGLE_PLACES_GROUP_ID &&
                 it.id != OSM_POI_GROUP_ID
             }
         }

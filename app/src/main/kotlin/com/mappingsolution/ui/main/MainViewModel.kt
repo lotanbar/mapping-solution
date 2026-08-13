@@ -15,15 +15,10 @@ import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.model.Route
 import com.mappingsolution.data.model.RoutePoint
 import com.mappingsolution.data.places.FetchedBounds
-import com.mappingsolution.data.places.GOOGLE_PLACES_FETCH_DEBOUNCE_MS
-import com.mappingsolution.data.places.GOOGLE_EVERYDAY_MIN_ZOOM
-import com.mappingsolution.data.places.GOOGLE_HIGHLIGHTS_MIN_ZOOM
-import com.mappingsolution.data.places.GooglePlacesRepository
 import com.mappingsolution.data.places.NEARBY_POI_MIN_ZOOM
 import com.mappingsolution.data.places.OSM_FETCH_DEBOUNCE_MS
 import com.mappingsolution.data.places.OsmPoiRepository
 import com.mappingsolution.data.prefs.ViewportPreference
-import com.mappingsolution.data.prefs.GooglePoiCategoryPreference
 import com.mappingsolution.data.recording.processing.OsmRoadCache
 import dagger.hilt.android.lifecycle.HiltViewModel
 import org.maplibre.geojson.Feature
@@ -49,13 +44,11 @@ class MainViewModel @Inject constructor(
     poiRepository: PoiFileRepository,
     private val routeRepository: RouteFileRepository,
     val mapHolder: MapHolder,
-    val googlePlacesRepository: GooglePlacesRepository,
     val osmPoiRepository: OsmPoiRepository,
     val bulkPoiRepository: BulkPoiRepository,
     private val mapLayersState: MapLayersState,
     private val searchPreviewState: SearchPreviewState,
     val osmRoadCache: OsmRoadCache,
-    private val googlePoiCategoryPreference: GooglePoiCategoryPreference,
 ) : ViewModel() {
 
     val groups: StateFlow<List<Group>> = groupRepository.observeAll()
@@ -91,12 +84,11 @@ class MainViewModel @Inject constructor(
     /** Reads last known viewport — always fresh (in-memory first, then disk). */
     val initialCamera: ViewportPreference.SavedCamera? get() = mapHolder.loadCamera()
 
-    /** True while either POI source is actively fetching from network. */
+    /** True while OSM or imported POIs are being loaded. */
     val isPoisLoading: StateFlow<Boolean> = combine(
-        googlePlacesRepository.isLoading,
         osmPoiRepository.isLoading,
         bulkPoiRepository.isLoading,
-    ) { g, o, b -> g || o || b }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    ) { o, b -> o || b }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     val bulkPois: StateFlow<List<Poi>> = bulkPoiRepository.poisInViewport
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -116,21 +108,17 @@ class MainViewModel @Inject constructor(
         mapLayersState.setMapStyle(next)
     }
 
-    private var googleRefreshJob: Job? = null
     private var osmRefreshJob: Job? = null
     private var bulkRefreshJob: Job? = null
 
     /** Last viewport bounds for which POI fetches were dispatched. */
     @Volatile private var lastDispatchedBounds: FetchedBounds? = null
-    @Volatile private var lastGoogleCategoryMode: String? = null
-    @Volatile private var lastOsmNaturalMode: Boolean? = null
 
     /** Tolerance in degrees (~110 m) used to consider two viewports identical. */
     private val BOUNDS_EPSILON = 0.001
 
     init {
         viewModelScope.launch {
-            googlePlacesRepository.evictStaleCacheOnLaunch()
             osmPoiRepository.evictStaleCacheOnLaunch()
         }
     }
@@ -149,11 +137,9 @@ class MainViewModel @Inject constructor(
     ) {
         saveCameraPosition(lat, lng, zoom, bearing, tilt)
 
-        if (zoom < NEARBY_POI_MIN_ZOOM) {
-            googleRefreshJob?.cancel()
+        if (zoom <= NEARBY_POI_MIN_ZOOM) {
             osmRefreshJob?.cancel()
             bulkRefreshJob?.cancel()
-            googlePlacesRepository.clear()
             osmPoiRepository.clear()
             bulkPoiRepository.clear()
             lastDispatchedBounds = null
@@ -165,11 +151,7 @@ class MainViewModel @Inject constructor(
         // Epsilon of 0.001° ≈ 110 m — well above MapLibre's floating-point jitter on resume.
         val newBounds = FetchedBounds(north, south, east, west)
         val prev = lastDispatchedBounds
-        val googleCategoryMode = googlePoiCategoryPreference.modeKey()
-        val includeNaturalOsm = mapLayersState.mapStyle.value == MapStyle.SATELLITE
         if (prev != null &&
-            googleCategoryMode == lastGoogleCategoryMode &&
-            includeNaturalOsm == lastOsmNaturalMode &&
             kotlin.math.abs(newBounds.north - prev.north) < BOUNDS_EPSILON &&
             kotlin.math.abs(newBounds.south - prev.south) < BOUNDS_EPSILON &&
             kotlin.math.abs(newBounds.east  - prev.east)  < BOUNDS_EPSILON &&
@@ -180,32 +162,13 @@ class MainViewModel @Inject constructor(
         }
         android.util.Log.d("MainViewModel", "onCameraChanged: PROCEEDING — zoom=$zoom prev=$prev new=$newBounds")
         lastDispatchedBounds = newBounds
-        lastGoogleCategoryMode = googleCategoryMode
-        lastOsmNaturalMode = includeNaturalOsm
-
-        googleRefreshJob?.cancel()
-        val showGoogleHighlights = googlePoiCategoryPreference.showDiscovery.value &&
-            zoom >= GOOGLE_HIGHLIGHTS_MIN_ZOOM
-        val showGoogleEveryday = googlePoiCategoryPreference.showOther.value &&
-            zoom >= GOOGLE_EVERYDAY_MIN_ZOOM
-        if (!showGoogleHighlights && !showGoogleEveryday) {
-            googlePlacesRepository.clear()
-        } else {
-            googleRefreshJob = viewModelScope.launch {
-                delay(GOOGLE_PLACES_FETCH_DEBOUNCE_MS)
-                googlePlacesRepository.refreshForViewport(
-                    north, south, east, west, zoom,
-                    allowOtherAtZoom = zoom >= GOOGLE_EVERYDAY_MIN_ZOOM,
-                )
-            }
-        }
 
         osmRefreshJob?.cancel()
         osmRefreshJob = viewModelScope.launch {
             delay(OSM_FETCH_DEBOUNCE_MS)
             osmPoiRepository.refreshForViewport(
                 north, south, east, west, zoom,
-                includeNatural = includeNaturalOsm,
+                includeNatural = true,
             )
         }
 

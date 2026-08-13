@@ -229,7 +229,6 @@ fun MapComponent(
     groups: List<Group> = emptyList(),
     routes: List<Route> = emptyList(),
     routePoints: Map<String, List<RoutePoint>> = emptyMap(),
-    googlePlaces: List<Poi> = emptyList(),
     osmPois: List<Poi> = emptyList(),
     bulkPois: List<Poi> = emptyList(),
     liveRoutePoints: List<RecordingPoint> = emptyList(),
@@ -246,7 +245,6 @@ fun MapComponent(
     onBoundsChanged: (north: Double, south: Double, east: Double, west: Double, lat: Double, lng: Double, zoom: Double, bearing: Double, tilt: Double) -> Unit = { _, _, _, _, _, _, _, _, _ -> },
     onPoiTapped: (String) -> Unit = {},
     onRouteTapped: (String) -> Unit = {},
-    onGooglePlaceTapped: (String) -> Unit = {},
     onOsmPoiTapped: (String) -> Unit = {},
     onBulkPoiTapped: (String) -> Unit = {},
     onMapReady: (MapLibreMap) -> Unit = {},
@@ -261,7 +259,6 @@ fun MapComponent(
     val layoutDirection = LocalLayoutDirection.current
     val onPoiTappedRef = rememberUpdatedState(onPoiTapped)
     val onRouteTappedRef = rememberUpdatedState(onRouteTapped)
-    val onGooglePlaceTappedRef = rememberUpdatedState(onGooglePlaceTapped)
     val onOsmPoiTappedRef = rememberUpdatedState(onOsmPoiTapped)
     val onBulkPoiTappedRef = rememberUpdatedState(onBulkPoiTapped)
     val onCameraIdleRef = rememberUpdatedState(onCameraIdle)
@@ -582,41 +579,6 @@ fun MapComponent(
         }
     }
 
-    LaunchedEffect(googlePlaces, styleReady.value) {
-        val map = mapState.value ?: return@LaunchedEffect
-        if (!styleReady.value) return@LaunchedEffect
-        val style = map.style ?: return@LaunchedEffect
-        val source = style.getSource("google-places-source") as? GeoJsonSource ?: return@LaunchedEffect
-
-        googlePlaces.asSequence()
-            .map { it.iconKey?.takeIf(String::isNotBlank) ?: "marker" }
-            .distinct()
-            .forEach { key ->
-                val imageId = "pin-google-$key"
-                if (style.getImage(imageId) == null) {
-                    val painter = allPainters[key] ?: placePainterFallback
-                    style.addImage(imageId, createPoiCircle(key, painter, density, layoutDirection))
-                }
-            }
-        val features = withContext(Dispatchers.Default) {
-            googlePlaces.map { poi ->
-                val iconId = "pin-google-${poi.iconKey?.takeIf(String::isNotBlank) ?: "marker"}"
-                Feature.fromGeometry(
-                    Point.fromLngLat(poi.lng, poi.lat),
-                    null,
-                    poi.id,
-                ).apply {
-                    addStringProperty("poiId", poi.id)
-                    addStringProperty("icon-id", iconId)
-                }
-            }
-        }
-        source.setGeoJson(FeatureCollection.fromFeatures(features))
-        style.getLayer("google-places-symbols")?.setProperties(
-            PropertyFactory.visibility(if (googlePlaces.isEmpty()) Property.NONE else Property.VISIBLE)
-        )
-    }
-
     LaunchedEffect(osmPois, styleReady.value) {
         val map = mapState.value ?: return@LaunchedEffect
         if (!styleReady.value) return@LaunchedEffect
@@ -728,16 +690,7 @@ fun MapComponent(
                             return@addOnMapClickListener true
                         }
                     }
-                    // Google Places second
-                    val googleHit = map.queryRenderedFeatures(rect, "google-places-symbols")
-                    if (googleHit.isNotEmpty()) {
-                        val placeId = googleHit[0].getStringProperty("poiId")
-                        if (placeId != null) {
-                            onGooglePlaceTappedRef.value(placeId)
-                            return@addOnMapClickListener true
-                        }
-                    }
-                    // Bulk imported POIs third
+                    // Bulk imported POIs second
                     val bulkHit = map.queryRenderedFeatures(rect, "bulk-poi-symbols")
                     if (bulkHit.isNotEmpty()) {
                         val bulkId = bulkHit[0].getStringProperty("poiId")
@@ -746,7 +699,7 @@ fun MapComponent(
                             return@addOnMapClickListener true
                         }
                     }
-                    // OSM POIs fourth
+                    // OSM POIs third
                     val osmHit = map.queryRenderedFeatures(rect, "osm-poi-symbols")
                     if (osmHit.isNotEmpty()) {
                         val osmId = osmHit[0].getStringProperty("poiId")
@@ -827,7 +780,6 @@ private val BASE_MAP_EXCLUDED_LAYER_IDS = setOf(
     "live-route-line",
     "osm-poi-symbols",
     "bulk-poi-symbols",
-    "google-places-symbols",
     "poi-symbols",
     "search-preview-symbol",
 )
@@ -867,7 +819,6 @@ private fun setupMapStyle(
     style.addSource(GeoJsonSource("live-route-source"))
     style.addSource(GeoJsonSource("osm-poi-source", FeatureCollection.fromFeatures(emptyList<Feature>())))
     style.addSource(GeoJsonSource("bulk-poi-source", FeatureCollection.fromFeatures(emptyList<Feature>())))
-    style.addSource(GeoJsonSource("google-places-source", FeatureCollection.fromFeatures(emptyList<Feature>())))
     style.addSource(GeoJsonSource("search-preview-source", FeatureCollection.fromFeatures(emptyList<Feature>())))
     style.addSource(GeoJsonSource("osm-roads-source", FeatureCollection.fromFeatures(emptyList<Feature>())))
 
@@ -976,7 +927,7 @@ private fun setupMapStyle(
             PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
             PropertyFactory.iconOpacity(1f),
             PropertyFactory.iconSize(0.988f),
-        )
+        ).apply { minZoom = 6.01f }
     )
     style.addLayer(
         SymbolLayer("osm-poi-symbols", "osm-poi-source").withProperties(
@@ -986,17 +937,7 @@ private fun setupMapStyle(
             PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
             PropertyFactory.iconOpacity(1f),
             PropertyFactory.iconSize(0.806f),
-        )
-    )
-    style.addLayer(
-        SymbolLayer("google-places-symbols", "google-places-source").withProperties(
-            PropertyFactory.iconImage(Expression.get("icon-id")),
-            PropertyFactory.iconAllowOverlap(true),
-            PropertyFactory.iconIgnorePlacement(true),
-            PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
-            PropertyFactory.iconOpacity(1f),
-            PropertyFactory.iconSize(0.806f),
-        )
+        ).apply { minZoom = 6.01f }
     )
     style.addLayer(
         SymbolLayer("poi-symbols", "poi-source").withProperties(
@@ -1006,7 +947,7 @@ private fun setupMapStyle(
             PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
             PropertyFactory.iconOpacity(1f),
             PropertyFactory.iconSize(1.131f),
-        )
+        ).apply { minZoom = 6.01f }
     )
     style.addLayer(
         SymbolLayer("search-preview-symbol", "search-preview-source").withProperties(

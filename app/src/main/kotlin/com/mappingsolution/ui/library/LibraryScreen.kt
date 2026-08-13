@@ -74,7 +74,6 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -91,7 +90,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -102,7 +100,6 @@ import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.model.RasterLayer
 import com.mappingsolution.data.model.Route
 import com.mappingsolution.data.fs.ImportResult
-import com.mappingsolution.data.places.GOOGLE_PLACES_GROUP_ID
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.ui.common.IconCatalog
 import kotlinx.coroutines.delay
@@ -149,14 +146,10 @@ fun LibraryScreen(
     val mbtilesImportProgressFraction by viewModel.mbtilesImportProgressFraction.collectAsState()
     val mbtilesImportResult by viewModel.mbtilesImportResult.collectAsState()
     val rasterLayers by viewModel.rasterLayers.collectAsState()
-    val googlePlaceCount by viewModel.googlePlaceCount.collectAsState()
     val osmPoiCount by viewModel.osmPoiCount.collectAsState()
-    val googlePlacesGroup by viewModel.googlePlacesGroup.collectAsState()
     val osmPoiGroup by viewModel.osmPoiGroup.collectAsState()
     val mapStyle by viewModel.mapStyle.collectAsState()
     val hillshadeVisible by viewModel.hillshadeVisible.collectAsState()
-    val showGoogleDiscovery by viewModel.showGoogleDiscovery.collectAsState()
-    val showGoogleOther by viewModel.showGoogleOther.collectAsState()
 
     val context = LocalContext.current
 
@@ -655,7 +648,7 @@ fun LibraryScreen(
             }
 
             // ── POIs ──────────────────────────────────────────────────────
-            if (googlePlacesGroup != null || osmPoiGroup != null ||
+            if (osmPoiGroup != null ||
                 filteredPoiGroups.isNotEmpty() || filteredOrphanedPois.isNotEmpty()
             ) {
                 item {
@@ -667,31 +660,6 @@ fun LibraryScreen(
                             else showAllFilesDialog = true
                         },
                     )
-                }
-                googlePlacesGroup?.let { group ->
-                    item(key = "places-group") {
-                        PlacesGroupRow(
-                            group = group,
-                            count = googlePlaceCount,
-                            onToggleVisibility = { viewModel.toggleGooglePlacesVisibility() },
-                        )
-                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                    }
-                    item(key = "google-discovery-category") {
-                        GoogleCategoryRow(
-                            title = "Travel highlights",
-                            checked = showGoogleDiscovery,
-                            onCheckedChange = { viewModel.toggleGoogleDiscovery() },
-                        )
-                    }
-                    item(key = "google-other-category") {
-                        GoogleCategoryRow(
-                            title = "Everyday places",
-                            checked = showGoogleOther,
-                            onCheckedChange = { viewModel.toggleGoogleOther() },
-                        )
-                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                    }
                 }
                 osmPoiGroup?.let { group ->
                     item(key = "osm-group") {
@@ -725,7 +693,7 @@ fun LibraryScreen(
                             onTap = {
                                 when (selectionMode) {
                                     is LibrarySelectionMode.None ->
-                                        // imported groups are read-only (like Google/OSM); only collapsible groups expand
+                                        // Imported and OSM groups are read-only; only collapsible groups expand.
                                         if (isCollapsible) viewModel.toggleCollapse(group.id)
                                     is LibrarySelectionMode.GroupSelection -> viewModel.toggleGroupSelection(group.id)
                                     else -> Unit
@@ -988,7 +956,7 @@ fun LibraryScreen(
             // ── Empty state ───────────────────────────────────────────────
             if (filteredAllGroups.isEmpty() && filteredOrphanedPois.isEmpty() &&
                 filteredOrphanedRoutes.isEmpty() && filteredOrphanedPlans.isEmpty() &&
-                googlePlacesGroup == null && osmPoiGroup == null
+                osmPoiGroup == null
             ) {
                 item {
                     Box(
@@ -1623,25 +1591,16 @@ private fun PlacesGroupRow(
 ) {
     ListItem(
         headlineContent = {
-            val displayName = if (group.id == OSM_POI_GROUP_ID) "Open Street Map" else group.name
+            val displayName = if (group.id == OSM_POI_GROUP_ID) "OpenStreetMap" else group.name
             Text(displayName, style = MaterialTheme.typography.bodyLarge)
         },
         leadingContent = {
-            if (group.id == GOOGLE_PLACES_GROUP_ID) {
-                Icon(
-                    imageVector = Icons.Default.LocationOn,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(24.dp),
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Default.Public,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(24.dp),
-                )
-            }
+            Icon(
+                imageVector = Icons.Default.Public,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(24.dp),
+            )
         },
         trailingContent = {
             IconButton(onClick = onToggleVisibility) {
@@ -1654,25 +1613,6 @@ private fun PlacesGroupRow(
                     modifier = Modifier.size(26.dp),
                 )
             }
-        },
-    )
-}
-
-@Composable
-private fun GoogleCategoryRow(
-    title: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    ListItem(
-        modifier = Modifier.padding(start = 32.dp),
-        headlineContent = { Text(title) },
-        trailingContent = {
-            Switch(
-                checked = checked,
-                onCheckedChange = onCheckedChange,
-                modifier = Modifier.scale(0.72f),
-            )
         },
     )
 }

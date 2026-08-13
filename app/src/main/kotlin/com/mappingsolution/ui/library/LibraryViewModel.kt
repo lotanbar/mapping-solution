@@ -26,11 +26,8 @@ import com.mappingsolution.data.model.Plan
 import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.model.RasterLayer
 import com.mappingsolution.data.model.Route
-import com.mappingsolution.data.places.GOOGLE_PLACES_GROUP_ID
-import com.mappingsolution.data.places.GooglePlacesRepository
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.data.places.OsmPoiRepository
-import com.mappingsolution.data.prefs.GooglePoiCategoryPreference
 import com.mappingsolution.service.ImportWorker
 import com.mappingsolution.service.MbtilesImportWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -74,12 +71,10 @@ class LibraryViewModel @Inject constructor(
     private val routeRepository: RouteFileRepository,
     private val planRepository: PlanFileRepository,
     private val exportRepository: ExportRepository,
-    private val googlePlacesRepository: GooglePlacesRepository,
     private val osmPoiRepository: OsmPoiRepository,
     private val bulkPoiRepository: BulkPoiRepository,
     private val mapLayersState: MapLayersState,
     private val rasterLayerRepository: RasterLayerRepository,
-    private val googlePoiCategoryPreference: GooglePoiCategoryPreference,
 ) : ViewModel() {
 
     private val workManager = WorkManager.getInstance(context)
@@ -88,20 +83,10 @@ class LibraryViewModel @Inject constructor(
 
     val mapStyle: StateFlow<MapStyle> = mapLayersState.mapStyle
     val hillshadeVisible: StateFlow<Boolean> = mapLayersState.hillshadeVisible
-    val showGoogleDiscovery: StateFlow<Boolean> = googlePoiCategoryPreference.showDiscovery
-    val showGoogleOther: StateFlow<Boolean> = googlePoiCategoryPreference.showOther
     val rasterLayers: StateFlow<List<RasterLayer>> = mapLayersState.rasterLayers
 
     fun setMapStyle(style: MapStyle) = mapLayersState.setMapStyle(style)
     fun toggleHillshade() = mapLayersState.setHillshadeVisible(!mapLayersState.hillshadeVisible.value)
-    fun toggleGoogleDiscovery() {
-        googlePoiCategoryPreference.setShowDiscovery(!showGoogleDiscovery.value)
-        googlePlacesRepository.clear()
-    }
-    fun toggleGoogleOther() {
-        googlePoiCategoryPreference.setShowOther(!showGoogleOther.value)
-        googlePlacesRepository.clear()
-    }
     fun toggleRasterLayerVisibility(id: String) = mapLayersState.toggleRasterLayerVisibility(id)
     fun deleteSelectedRasterLayers() {
         val ids = (_selectionMode.value as? LibrarySelectionMode.RasterLayerSelection)?.selectedIds ?: return
@@ -127,26 +112,13 @@ class LibraryViewModel @Inject constructor(
 
     // ── Places group counts + visibility ─────────────────────────────────
 
-    val googlePlaceCount: StateFlow<Int> = googlePlacesRepository.pois
-        .map { it.size }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
-
     val osmPoiCount: StateFlow<Int> = osmPoiRepository.pois
         .map { it.size }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
-    val googlePlacesGroup: StateFlow<Group?> = _allGroups
-        .map { groups -> groups.find { it.id == GOOGLE_PLACES_GROUP_ID } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-
     val osmPoiGroup: StateFlow<Group?> = _allGroups
         .map { groups -> groups.find { it.id == OSM_POI_GROUP_ID } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-
-    fun toggleGooglePlacesVisibility() {
-        val group = googlePlacesGroup.value ?: return
-        viewModelScope.launch { groupRepository.setVisibility(group.id, !group.isVisible) }
-    }
 
     fun toggleOsmPoisVisibility() {
         val group = osmPoiGroup.value ?: return
@@ -174,7 +146,7 @@ class LibraryViewModel @Inject constructor(
         _allGroups, _allPois, _allRoutes, _allPlans, _searchQuery,
     ) { groups, pois, routes, plans, query ->
         val userGroups = groups.filter {
-            it.id != GOOGLE_PLACES_GROUP_ID && it.id != OSM_POI_GROUP_ID && it.type == type
+            it.id != OSM_POI_GROUP_ID && it.type == type
         }
         if (query.isBlank()) return@combine userGroups
         val poisByGroup = pois.groupBy { it.groupId }
@@ -205,7 +177,7 @@ class LibraryViewModel @Inject constructor(
 
     /** All user groups (all types, unfiltered by search) — used for empty-state check. */
     val filteredAllGroups: StateFlow<List<Group>> = _allGroups
-        .map { groups -> groups.filter { it.id != GOOGLE_PLACES_GROUP_ID && it.id != OSM_POI_GROUP_ID } }
+        .map { groups -> groups.filter { it.id != OSM_POI_GROUP_ID } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** All grouped POIs keyed by groupId (unfiltered by search, for collapse rendering). */
@@ -261,7 +233,7 @@ class LibraryViewModel @Inject constructor(
             if (plans.any { it.id in ids && it.groupId == null }) add(GroupType.PLAN)
         }
         allGroups.filter {
-            it.id != GOOGLE_PLACES_GROUP_ID && it.id != OSM_POI_GROUP_ID && it.type in types
+            it.id != OSM_POI_GROUP_ID && it.type in types
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 

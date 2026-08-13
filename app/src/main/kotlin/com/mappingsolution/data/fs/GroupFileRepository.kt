@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.GroupType
-import com.mappingsolution.data.places.GOOGLE_PLACES_GROUP_ID
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.data.util.StorageManager
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -38,22 +37,13 @@ class GroupFileRepository @Inject constructor(
         context.getSharedPreferences("group_visibility", Context.MODE_PRIVATE)
     }
 
-    // ── Hardcoded system groups (Google Places and OSM) ──────────────────────
+    // ── Hardcoded OSM system group ──────────────────────────────────────────
     // These are never written to the filesystem; visibility is stored in SharedPreferences.
     private val systemGroups: List<Group> get() = listOf(
         Group(
-            id = GOOGLE_PLACES_GROUP_ID,
-            name = "Google Places",
-            description = "Nearby businesses from Google",
-            iconKey = "marker",
-            color = "#FF4285F4",
-            isImported = true,
-            isVisible = prefs.getBoolean(GOOGLE_PLACES_GROUP_ID, true),
-        ),
-        Group(
             id = OSM_POI_GROUP_ID,
             name = "OpenStreetMap POIs",
-            description = "Natural & historic landmarks from OSM",
+            description = "Travel landmarks from OpenStreetMap",
             iconKey = "mountain",
             color = "#FF4CAF50",
             isImported = true,
@@ -82,7 +72,7 @@ class GroupFileRepository @Inject constructor(
                 loadAll()
                 cleanupStaleImports()
                 // Seed default only if no persisted user/imported groups exist yet
-                if (_groups.value.none { it.id != GOOGLE_PLACES_GROUP_ID && it.id != OSM_POI_GROUP_ID }) seedDefault()
+                if (_groups.value.none { it.id != OSM_POI_GROUP_ID }) seedDefault()
             } catch (e: java.io.IOException) {
                 android.util.Log.e("GroupFileRepository", "Storage not accessible on init; permission may be missing", e)
             } catch (e: SecurityException) {
@@ -287,7 +277,7 @@ class GroupFileRepository @Inject constructor(
 
     /** Toggles the isVisible flag without running duplicate validation. Safe to call for any group. */
     suspend fun setVisibility(groupId: String, isVisible: Boolean) = withContext(Dispatchers.IO) {
-        if (groupId == GOOGLE_PLACES_GROUP_ID || groupId == OSM_POI_GROUP_ID) {
+        if (groupId == OSM_POI_GROUP_ID) {
             prefs.edit().putBoolean(groupId, isVisible).apply()
             setGroups(_groups.value.map {
                 if (it.id == groupId) it.copy(isVisible = isVisible) else it
@@ -311,7 +301,7 @@ class GroupFileRepository @Inject constructor(
 
     private fun checkDuplicates(group: Group, excludeId: String = ""): DuplicateFieldError? {
         val others = _groups.value.filter {
-            it.id != excludeId && it.id != GOOGLE_PLACES_GROUP_ID && it.id != OSM_POI_GROUP_ID
+            it.id != excludeId && it.id != OSM_POI_GROUP_ID
         }
         val name = group.name.trim()
         if (others.any { it.name.trim().equals(name, ignoreCase = true) }) return DuplicateFieldError.Name
@@ -325,7 +315,7 @@ class GroupFileRepository @Inject constructor(
 
     private fun writeGroup(group: Group) {
         // System groups are never persisted to disk
-        if (group.id == GOOGLE_PLACES_GROUP_ID || group.id == OSM_POI_GROUP_ID) return
+        if (group.id == OSM_POI_GROUP_ID) return
 
         val json = JSONObject().apply {
             put("id", group.id)

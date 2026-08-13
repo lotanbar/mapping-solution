@@ -197,7 +197,6 @@ fun SearchNPlanScreen(
                                                     is SearchResult.PersonalPoi -> "poi"
                                                     is SearchResult.ImportedPoi -> "poi"
                                                     is SearchResult.OsmPoi -> "osm_poi"
-                                                    is SearchResult.GooglePlace -> "google_place"
                                                 }
                                                 callback(type, result.poi.id)
                                             }
@@ -287,7 +286,6 @@ fun SearchNPlanScreen(
                                                 is SearchResult.PersonalPoi -> "poi"
                                                 is SearchResult.ImportedPoi -> "poi"
                                                 is SearchResult.OsmPoi -> "osm_poi"
-                                                is SearchResult.GooglePlace -> "google_place"
                                             }
                                             callback(type, result.poi.id)
                                         }

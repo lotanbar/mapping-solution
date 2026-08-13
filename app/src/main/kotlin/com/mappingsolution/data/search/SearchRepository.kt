@@ -5,8 +5,6 @@ import com.mappingsolution.data.fs.GroupFileRepository
 import com.mappingsolution.data.fs.PoiFileRepository
 import com.mappingsolution.data.model.SearchResult
 import com.mappingsolution.data.places.OsmApiService
-import com.mappingsolution.data.places.PlacesApiService
-import com.mappingsolution.data.prefs.GooglePoiCategoryPreference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -20,17 +18,14 @@ class SearchRepository @Inject constructor(
     private val poiFileRepository: PoiFileRepository,
     private val bulkPoiRepository: BulkPoiRepository,
     private val groupFileRepository: GroupFileRepository,
-    private val placesApiService: PlacesApiService,
     private val osmApiService: OsmApiService,
-    private val googlePoiCategoryPreference: GooglePoiCategoryPreference,
 ) {
 
     /**
-     * Fans out a text query to all 4 sources in parallel.
+     * Fans out a text query to personal, imported, and OSM sources in parallel.
      *
      * Personal and Imported POIs are searched in-memory instantly.
-     * OSM (Nominatim) and Google Places are queried over the network, biased to
-     * [userLat]/[userLng] within a bounding box of roughly ±0.5°.
+     * OSM Nominatim is queried within the current map bounding box.
      *
      * Set [skipRemote] = true when no GPS fix is available, to avoid irrelevant
      * results near (0, 0).
@@ -76,25 +71,6 @@ class SearchRepository @Inject constructor(
             }
         }
 
-        val google = async(Dispatchers.IO) {
-            if (skipRemote) return@async emptyList()
-            val showDiscovery = googlePoiCategoryPreference.showDiscovery.value
-            val showOther = googlePoiCategoryPreference.showOther.value
-            if (!showDiscovery && !showOther) return@async emptyList()
-            try {
-                placesApiService.searchText(
-                    q, userLat, userLng,
-                    showDiscovery = showDiscovery,
-                    showOther = showOther,
-                )
-                    .map { SearchResult.GooglePlace(it) }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                emptyList()
-            }
-        }
-
-        personal.await() + imported.await() + osm.await() + google.await()
+        personal.await() + imported.await() + osm.await()
     }
 }

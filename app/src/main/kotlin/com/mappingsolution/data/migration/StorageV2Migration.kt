@@ -2,7 +2,6 @@ package com.mappingsolution.data.migration
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.mappingsolution.data.places.GOOGLE_PLACES_GROUP_ID
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.data.util.StorageManager
 import org.json.JSONObject
@@ -23,7 +22,7 @@ import java.io.File
  *   pois/<name>_<id8>/bulk_pois.jsonl      ← unchanged
  *   pois/orphans/<poi>_<id8>/poi.json      ← POIs with no group
  *
- * System groups (Google Places, OSM) are removed from disk; their isVisible is
+ * Legacy system groups are removed from disk; OSM visibility is
  * migrated to SharedPreferences.
  *
  * The migration is gated by a `.storage_v2` marker file and safe to run multiple
@@ -46,7 +45,7 @@ class StorageV2Migration(
         val legacyGroupFiles = groupsDir.listFiles { f -> f.isFile && f.extension == "json" }
             ?: emptyArray()
 
-        val systemIds = setOf(GOOGLE_PLACES_GROUP_ID, OSM_POI_GROUP_ID)
+        val systemIds = setOf("google-places-group", OSM_POI_GROUP_ID)
 
         for (file in legacyGroupFiles) {
             val json = try { JSONObject(file.readText()) } catch (_: Exception) { continue }

@@ -23,7 +23,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.ImageNotSupported
 import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Videocam
@@ -51,7 +50,6 @@ import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.MediaItem
 import com.mappingsolution.data.model.MediaType
 import com.mappingsolution.data.model.Poi
-import com.mappingsolution.data.places.GOOGLE_PLACES_GROUP_ID
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.ui.common.IconCatalog
 import androidx.compose.ui.res.painterResource
@@ -213,7 +211,7 @@ fun PoiMediaPager(
 
 /**
  * Shows the appropriate source icon for a POI group:
- * Google Places → location pin, OSM → globe, imported → layers icon, user groups → their IconCatalog icon.
+ * OSM → globe, imported → layers icon, user groups → their IconCatalog icon.
  */
 @Composable
 fun PoiGroupSourceIcon(
@@ -223,14 +221,6 @@ fun PoiGroupSourceIcon(
     modifier: Modifier = Modifier,
 ) {
     when {
-        group.id == GOOGLE_PLACES_GROUP_ID -> {
-            Icon(
-                imageVector = Icons.Default.LocationOn,
-                contentDescription = null,
-                modifier = modifier.size(size),
-                tint = tint,
-            )
-        }
         group.id == OSM_POI_GROUP_ID -> {
             Icon(
                 imageVector = Icons.Default.Public,

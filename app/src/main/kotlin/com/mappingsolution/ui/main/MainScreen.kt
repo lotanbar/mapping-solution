@@ -51,11 +51,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.mappingsolution.BuildConfig
 import com.mappingsolution.data.model.Route
-import com.mappingsolution.data.places.BULK_POI_MAX_RESULTS
-import com.mappingsolution.data.places.GOOGLE_PLACES_GROUP_ID
-import com.mappingsolution.data.places.GOOGLE_PLACES_MAX_RESULTS
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.data.recording.RecordingEvent
 import com.mappingsolution.data.recording.RecordingState
@@ -75,7 +71,6 @@ fun MainScreen(
     onPoiTapped: (poiId: String) -> Unit,
     onOpenSearch: () -> Unit = {},
     onRouteTapped: (routeId: String) -> Unit = {},
-    onGooglePlaceTapped: (placeId: String) -> Unit = {},
     onOsmPoiTapped: (osmId: String) -> Unit = {},
     onBulkPoiTapped: (poiId: String) -> Unit = {},
     onNavigateToFinalize: (routeId: String) -> Unit = {},
@@ -90,7 +85,6 @@ fun MainScreen(
     val routePoints by viewModel.routePoints.collectAsState()
     val recordingState by recordingViewModel.state.collectAsState()
     val incompleteRoutes by viewModel.incompleteRoutes.collectAsState()
-    val googlePlacesRaw by viewModel.googlePlacesRepository.pois.collectAsState()
     val osmPoisRaw by viewModel.osmPoiRepository.pois.collectAsState()
     val bulkPoisRaw by viewModel.bulkPois.collectAsState()
     val currentMapStyle by viewModel.mapStyle.collectAsState()
@@ -98,23 +92,11 @@ fun MainScreen(
     val rasterLayers by viewModel.rasterLayers.collectAsState()
     val baseMapVisible by viewModel.baseMapVisible.collectAsState()
     val searchPreviewLocation by viewModel.searchPreviewLocation.collectAsState()
-    val googleQuotaExhausted by viewModel.googlePlacesRepository.isQuotaExhausted.collectAsState()
     val isPoisLoading by viewModel.isPoisLoading.collectAsState()
     val osmRoadsGeoJson by viewModel.osmRoadsGeoJson.collectAsState()
-    var quotaToastMessage by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(googleQuotaExhausted) {
-        if (googleQuotaExhausted) {
-            quotaToastMessage = "Google POIs unavailable: daily API quota reached. They'll return tomorrow."
-        }
-    }
-
-    // Google has a zoom-aware cap; OSM and user/imported data are not capped here.
-    // Respect each source's group-level visibility toggle (set from the Library screen).
-    val googleGroupVisible = groups.find { it.id == GOOGLE_PLACES_GROUP_ID }?.isVisible != false
+    // Respect the OSM group-level visibility toggle. Imported POIs are intentionally uncapped.
     val osmGroupVisible = groups.find { it.id == OSM_POI_GROUP_ID }?.isVisible != false
-    val googlePlaces = if (googleGroupVisible) googlePlacesRaw.take(GOOGLE_PLACES_MAX_RESULTS) else emptyList()
-    val bulkPois = bulkPoisRaw.take(BULK_POI_MAX_RESULTS)
+    val bulkPois = bulkPoisRaw
     val osmPois = if (osmGroupVisible) osmPoisRaw else emptyList()
 
     var isFetchingLocation by remember { mutableStateOf(false) }
@@ -340,7 +322,6 @@ fun MainScreen(
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        TopToast(message = quotaToastMessage, onDismiss = { quotaToastMessage = null })
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 MapComponent(
@@ -348,12 +329,10 @@ fun MainScreen(
                     groups = groups,
                     routes = routes,
                     routePoints = routePoints,
-                    googlePlaces = googlePlaces,
                     osmPois = osmPois,
                     bulkPois = bulkPois,
                     onPoiTapped = onPoiTapped,
                     onRouteTapped = onRouteTapped,
-                    onGooglePlaceTapped = onGooglePlaceTapped,
                     onOsmPoiTapped = onOsmPoiTapped,
                     onBulkPoiTapped = onBulkPoiTapped,
                     onMapError = { mapError = it },
@@ -391,6 +370,17 @@ fun MainScreen(
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
+                TextButton(
+                    onClick = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.openstreetmap.org/copyright")))
+                    },
+                    modifier = Modifier.align(Alignment.BottomStart),
+                ) {
+                    Text(
+                        text = "© OpenStreetMap contributors",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
                 if (mapError != null) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
@@ -418,21 +408,6 @@ fun MainScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    if (BuildConfig.GOOGLE_PLACES_API_KEY.isBlank()) {
-                        Surface(
-                            shape = MaterialTheme.shapes.medium,
-                            color = androidx.compose.ui.graphics.Color(0xFFB00020),
-                            shadowElevation = 4.dp,
-                        ) {
-                            Text(
-                                "Google Places API key is missing",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = androidx.compose.ui.graphics.Color.White,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                            )
-                        }
-                    }
-
                     if (isPoisLoading) {
                         Surface(
                             shape = MaterialTheme.shapes.large,

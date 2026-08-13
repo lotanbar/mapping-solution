@@ -22,8 +22,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Navigation
-import androidx.compose.material.icons.filled.Phone
-import androidx.compose.material.icons.filled.Language
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -35,6 +33,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -59,6 +58,7 @@ import com.mappingsolution.data.model.DestinationSource
 import com.mappingsolution.data.model.MediaUtils
 import com.mappingsolution.data.model.PlanDestination
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
+import com.mappingsolution.data.places.WikimediaContent
 import com.mappingsolution.ui.common.TopToast
 import com.mappingsolution.ui.poi.NoMediaPlaceholder
 import com.mappingsolution.ui.poi.PoiGroupSourceIcon
@@ -120,9 +120,6 @@ fun ItemDetailScreen(
                 modifier = Modifier.padding(padding),
                 isReadOnly = item.isReadOnly,
                 fromSearch = fromSearch,
-                website = state.website,
-                phone = state.phone,
-                isContactInfoLoading = state.isContactInfoLoading,
                 onNavigateBack = onNavigateBack,
                 onNavigateToEdit = onNavigateToEditPoi,
                 onOpenMediaPreview = onOpenMediaPreview,
@@ -155,9 +152,6 @@ private fun PoiDetailContent(
     modifier: Modifier = Modifier,
     isReadOnly: Boolean = false,
     fromSearch: Boolean = false,
-    website: String? = null,
-    phone: String? = null,
-    isContactInfoLoading: Boolean = false,
     onNavigateBack: () -> Unit,
     onNavigateToEdit: (poiId: String) -> Unit,
     onOpenMediaPreview: (poiId: String, index: Int, paths: List<String>) -> Unit,
@@ -175,9 +169,6 @@ private fun PoiDetailContent(
         ReadOnlyPoiFullLayout(
             item = item,
             modifier = modifier,
-            website = website,
-            phone = phone,
-            isContactInfoLoading = isContactInfoLoading,
             onOpenMediaPreview = onOpenMediaPreview,
             context = context,
         )
@@ -211,6 +202,11 @@ private fun PoiDetailContent(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
                     .padding(top = 16.dp, bottom = 90.dp),
+            )
+            WikimediaAttribution(
+                content = item.wikimediaContent,
+                context = context,
+                modifier = Modifier.padding(horizontal = 16.dp),
             )
         }
 
@@ -351,9 +347,6 @@ private fun SearchContextBottomBar(
 private fun ReadOnlyPoiFullLayout(
     item: DetailItem.PoiDetail,
     modifier: Modifier = Modifier,
-    website: String?,
-    phone: String?,
-    isContactInfoLoading: Boolean,
     onOpenMediaPreview: (poiId: String, index: Int, paths: List<String>) -> Unit,
     context: android.content.Context,
 ) {
@@ -426,6 +419,7 @@ private fun ReadOnlyPoiFullLayout(
                     )
                 }
             }
+            WikimediaAttribution(item.wikimediaContent, context)
         }
 
         Surface(
@@ -441,32 +435,43 @@ private fun ReadOnlyPoiFullLayout(
             ) {
                 Button(
                     onClick = { NavigationIntentHelper.launchSingleNavigation(context, poi.lat, poi.lng) },
-                    modifier = Modifier.weight(1f).height(64.dp),
+                    modifier = Modifier.fillMaxWidth().height(64.dp),
                 ) {
                     Icon(Icons.Default.Navigation, contentDescription = "Navigate", modifier = Modifier.size(28.dp))
                 }
-                OutlinedButton(
-                    onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(website))) },
-                    enabled = !isContactInfoLoading && website != null,
-                    modifier = Modifier.weight(1f).height(64.dp),
-                ) {
-                    if (isContactInfoLoading) {
-                        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Default.Language, contentDescription = "Website", modifier = Modifier.size(28.dp))
-                    }
-                }
-                OutlinedButton(
-                    onClick = { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone"))) },
-                    enabled = !isContactInfoLoading && phone != null,
-                    modifier = Modifier.weight(1f).height(64.dp),
-                ) {
-                    if (isContactInfoLoading) {
-                        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Default.Phone, contentDescription = "Phone", modifier = Modifier.size(28.dp))
-                    }
-                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WikimediaAttribution(
+    content: WikimediaContent?,
+    context: android.content.Context,
+    modifier: Modifier = Modifier,
+) {
+    if (content == null) return
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(0.dp)) {
+        content.pageUrl?.let { url ->
+            TextButton(
+                onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+            ) {
+                Text("Description source: Wikipedia/Wikidata · CC BY-SA/CC0")
+            }
+        }
+        content.imageUrl?.let {
+            val label = content.imageCredit?.let { credit -> "Photo: $credit" }
+                ?: "Photo source: Wikimedia Commons"
+            TextButton(
+                onClick = {
+                    val url = content.imageSourceUrl ?: content.imageLicenseUrl ?: return@TextButton
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                },
+                enabled = content.imageSourceUrl != null || content.imageLicenseUrl != null,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+            ) {
+                Text(label)
             }
         }
     }

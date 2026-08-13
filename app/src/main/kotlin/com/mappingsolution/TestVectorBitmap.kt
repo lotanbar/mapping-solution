@@ -252,7 +252,7 @@ fun createHexagonIcon(
     return bitmap
 }
 
-/** Creates a circular-head pin for Google Places and circular personal groups. */
+/** Creates a circular-head pin for personal POI groups. */
 fun createCircleIcon(
     iconKey: String,
     size: Int = 80,

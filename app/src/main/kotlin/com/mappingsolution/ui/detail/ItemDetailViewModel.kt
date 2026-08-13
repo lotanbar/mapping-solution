@@ -11,9 +11,8 @@ import com.mappingsolution.data.model.DestinationSource
 import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.model.Route
-import com.mappingsolution.data.places.GooglePlacesRepository
 import com.mappingsolution.data.places.OsmPoiRepository
-import com.mappingsolution.data.places.PlaceDetail
+import com.mappingsolution.data.places.WikimediaContent
 import com.mappingsolution.data.util.StorageManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,6 +30,7 @@ sealed interface DetailItem {
         val mediaPaths: List<String>,
         val isReadOnly: Boolean = false,
         val sourceType: DestinationSource = DestinationSource.PERSONAL,
+        val wikimediaContent: WikimediaContent? = null,
     ) : DetailItem
 
     data class RouteDetail(val route: Route) : DetailItem
@@ -39,9 +39,6 @@ sealed interface DetailItem {
 data class ItemDetailState(
     val item: DetailItem? = null,
     val isLoading: Boolean = true,
-    val website: String? = null,
-    val phone: String? = null,
-    val isContactInfoLoading: Boolean = false,
 )
 
 @HiltViewModel
@@ -50,7 +47,6 @@ class ItemDetailViewModel @Inject constructor(
     private val bulkPoiRepository: BulkPoiRepository,
     private val routeRepository: RouteFileRepository,
     private val groupRepository: GroupFileRepository,
-    private val googlePlacesRepository: GooglePlacesRepository,
     private val osmPoiRepository: OsmPoiRepository,
     private val storageManager: StorageManager,
     savedStateHandle: SavedStateHandle,
@@ -71,7 +67,6 @@ class ItemDetailViewModel @Inject constructor(
             when (type) {
                 "poi" -> loadPoi()
                 "route" -> loadRoute()
-                "google_place" -> loadGooglePlace()
                 "osm_poi" -> loadOsmPoi()
                 else -> _state.update { it.copy(isLoading = false) }
             }
@@ -117,56 +112,29 @@ class ItemDetailViewModel @Inject constructor(
         }
     }
 
-    private suspend fun loadGooglePlace() {
-        val poi = googlePlacesRepository.getById(id) ?: run {
-            _state.update { it.copy(isLoading = false) }
-            return
-        }
-        val group = poi.groupId?.let { groupRepository.getById(it) }
-        val detail = runCatching {
-            googlePlacesRepository.fetchPlaceDetail(id)
-        }.getOrElse { PlaceDetail() }
-        _state.update {
-            ItemDetailState(
-                item = DetailItem.PoiDetail(
-                    poi = poi,
-                    group = group,
-                    mediaPaths = detail.photoUrls,
-                    isReadOnly = true,
-                    sourceType = DestinationSource.GOOGLE,
-                ),
-                isLoading = false,
-                website = detail.contact?.website,
-                phone = detail.contact?.phone,
-                isContactInfoLoading = false,
-            )
-        }
-    }
-
     private suspend fun loadOsmPoi() {
         val poi = osmPoiRepository.getById(id) ?: run {
             _state.update { it.copy(isLoading = false) }
             return
         }
         val group = poi.groupId?.let { groupRepository.getById(it) }
-        val imageUrl = runCatching { osmPoiRepository.fetchImageUrl(id) }.getOrElse { null }
+        val wikimedia = runCatching { osmPoiRepository.fetchWikimediaContent(id) }.getOrElse { null }
+        val enrichedPoi = if (poi.description.isNullOrBlank() && !wikimedia?.description.isNullOrBlank()) {
+            poi.copy(description = wikimedia?.description)
+        } else poi
         _state.update {
             ItemDetailState(
                 item = DetailItem.PoiDetail(
-                    poi = poi,
+                    poi = enrichedPoi,
                     group = group,
-                    mediaPaths = listOfNotNull(imageUrl),
+                    mediaPaths = listOfNotNull(wikimedia?.imageUrl),
                     isReadOnly = true,
                     sourceType = DestinationSource.OSM,
+                    wikimediaContent = wikimedia,
                 ),
                 isLoading = false,
-                isContactInfoLoading = true,
             )
         }
-        val contact = runCatching {
-            googlePlacesRepository.findContactInfoNear(poi.name, poi.lat, poi.lng)
-        }.getOrElse { null }
-        _state.update { it.copy(website = contact?.website, phone = contact?.phone, isContactInfoLoading = false) }
     }
 
     private suspend fun loadRoute() {

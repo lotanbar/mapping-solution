@@ -38,7 +38,6 @@ fun SearchResultRow(
         is SearchResult.PersonalPoi -> "Personal" to Color(0xFF4CAF50)
         is SearchResult.ImportedPoi -> "Imported" to Color(0xFF2196F3)
         is SearchResult.OsmPoi -> "OSM" to Color(0xFFFF9800)
-        is SearchResult.GooglePlace -> "Google" to Color(0xFF9C27B0)
     }
 
     Row(
