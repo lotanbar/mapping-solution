@@ -24,6 +24,7 @@ import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.maplibre.android.module.http.HttpRequestUtil
 import java.io.File
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -48,6 +49,9 @@ class MappingApplication : Application(), Configuration.Provider {
             ImageLoader.Builder(this)
                 .okHttpClient(
                     OkHttpClient.Builder()
+                        .connectTimeout(15, TimeUnit.SECONDS)
+                        .readTimeout(30, TimeUnit.SECONDS)
+                        .callTimeout(40, TimeUnit.SECONDS)
                         .addInterceptor(Interceptor { chain ->
                             chain.proceed(
                                 chain.request().newBuilder()

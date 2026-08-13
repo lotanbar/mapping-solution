@@ -12,6 +12,20 @@ data class FetchedBounds(
     val west: Double,
 )
 
+fun FetchedBounds.covers(other: FetchedBounds): Boolean =
+    south <= other.south && north >= other.north && west <= other.west && east >= other.east
+
+fun FetchedBounds.expanded(fraction: Double): FetchedBounds {
+    val latPadding = (north - south) * fraction
+    val lngPadding = (east - west) * fraction
+    return FetchedBounds(
+        north = (north + latPadding).coerceAtMost(90.0),
+        south = (south - latPadding).coerceAtLeast(-90.0),
+        east = (east + lngPadding).coerceAtMost(180.0),
+        west = (west - lngPadding).coerceAtLeast(-180.0),
+    )
+}
+
 /**
  * Returns the sub-regions of [new] that are NOT already covered by [prev].
  *

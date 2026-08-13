@@ -31,6 +31,14 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
 
     private fun cacheFile(key: String) = File(cacheDir, "osm_$key.json")
 
+    /** Finds any fresh cache entry that already covers the viewport, regardless of its old center key. */
+    fun loadCovering(south: Double, west: Double, north: Double, east: Double): OsmCachedEntry? =
+        cacheDir.listFiles { file -> file.name.startsWith("osm_") && file.extension == "json" }
+            ?.asSequence()
+            ?.mapNotNull(::loadFile)
+            ?.filter { it.covers(south, west, north, east) }
+            ?.minByOrNull { (it.fetchedNorth - it.fetchedSouth) * (it.fetchedEast - it.fetchedWest) }
+
     /**
      * Loads cached POIs for [key] if they exist and are younger than [OSM_CACHE_TTL_MS].
      * Returns null on cache miss, expiry, or read error.
@@ -40,9 +48,13 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
     fun load(key: String): OsmCachedEntry? {
         val file = cacheFile(key)
         if (!file.exists()) return null
+        return loadFile(file)
+    }
+
+    private fun loadFile(file: File): OsmCachedEntry? {
         return runCatching {
             val json = JSONObject(file.readText())
-            if (json.optInt("version", 1) < 6) return null  // v6 uses strict exploration categories
+            if (json.optInt("version", 1) < CACHE_VERSION) return null
             val fetchedAt = json.getLong("fetchedAt")
             if (System.currentTimeMillis() - fetchedAt > OSM_CACHE_TTL_MS) return null
             val south = json.optDouble("south", Double.MAX_VALUE)
@@ -55,7 +67,7 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
             }
             OsmCachedEntry(pois, south, west, north, east)
         }.getOrElse {
-            Log.w("OsmPoiCache", "Failed to read cache for $key", it)
+            Log.w("OsmPoiCache", "Failed to read cache file ${file.name}", it)
             null
         }
     }
@@ -66,7 +78,7 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
             val arr = JSONArray()
             pois.forEach { arr.put(poiToJson(it)) }
             val json = JSONObject().apply {
-                put("version", 6)
+                put("version", CACHE_VERSION)
                 put("fetchedAt", System.currentTimeMillis())
                 put("south", south)
                 put("west", west)
@@ -87,7 +99,7 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
                     val json = JSONObject(file.readText())
                     val fetchedAt = json.getLong("fetchedAt")
                     val version = json.optInt("version", 1)
-                    if (now - fetchedAt > OSM_CACHE_TTL_MS || version < 6) file.delete()
+                    if (now - fetchedAt > OSM_CACHE_TTL_MS || version < CACHE_VERSION) file.delete()
                 }
             }
     }
@@ -100,6 +112,10 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
         poi.description?.let { put("description", it) }
         poi.iconKey?.let { put("iconKey", it) }
         poi.wikiRef?.let { put("wikiRef", it) }
+        if (poi.imageSearchNames.isNotEmpty()) {
+            put("imageSearchNames", org.json.JSONArray(poi.imageSearchNames))
+        }
+        if (poi.imageRefs.isNotEmpty()) put("imageRefs", org.json.JSONArray(poi.imageRefs))
     }
 
     private fun poisFromJson(obj: JSONObject, fetchedAt: Long) = Poi(
@@ -111,7 +127,17 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
         lng = obj.getDouble("lng"),
         iconKey = obj.optString("iconKey").ifBlank { null },
         wikiRef = obj.optString("wikiRef").ifBlank { null },
+        imageSearchNames = obj.optJSONArray("imageSearchNames")?.let { names ->
+            (0 until names.length()).mapNotNull { names.optString(it).ifBlank { null } }
+        }.orEmpty(),
+        imageRefs = obj.optJSONArray("imageRefs")?.let { refs ->
+            (0 until refs.length()).mapNotNull { refs.optString(it).ifBlank { null } }
+        }.orEmpty(),
         createdAt = fetchedAt,
         updatedAt = fetchedAt,
     )
+
+    private companion object {
+        const val CACHE_VERSION = 10
+    }
 }

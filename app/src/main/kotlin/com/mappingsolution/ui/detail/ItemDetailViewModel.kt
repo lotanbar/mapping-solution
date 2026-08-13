@@ -118,22 +118,29 @@ class ItemDetailViewModel @Inject constructor(
             return
         }
         val group = poi.groupId?.let { groupRepository.getById(it) }
+        _state.value = ItemDetailState(
+            item = DetailItem.PoiDetail(
+                poi = poi,
+                group = group,
+                mediaPaths = emptyList(),
+                isReadOnly = true,
+                sourceType = DestinationSource.OSM,
+            ),
+            isLoading = false,
+        )
+
+        // The POI itself is shown immediately. Wikimedia enrichment is allowed to appear later.
         val wikimedia = runCatching { osmPoiRepository.fetchWikimediaContent(id) }.getOrElse { null }
-        val enrichedPoi = if (poi.description.isNullOrBlank() && !wikimedia?.description.isNullOrBlank()) {
-            poi.copy(description = wikimedia?.description)
+            ?: return
+        val enrichedPoi = if (poi.description.isNullOrBlank() && !wikimedia.description.isNullOrBlank()) {
+            poi.copy(description = wikimedia.description)
         } else poi
         _state.update {
-            ItemDetailState(
-                item = DetailItem.PoiDetail(
-                    poi = enrichedPoi,
-                    group = group,
-                    mediaPaths = listOfNotNull(wikimedia?.imageUrl),
-                    isReadOnly = true,
-                    sourceType = DestinationSource.OSM,
-                    wikimediaContent = wikimedia,
-                ),
-                isLoading = false,
-            )
+            it.copy(item = (it.item as? DetailItem.PoiDetail)?.copy(
+                poi = enrichedPoi,
+                mediaPaths = listOfNotNull(wikimedia.imageUrl),
+                wikimediaContent = wikimedia,
+            ))
         }
     }
 

@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -451,29 +452,46 @@ private fun WikimediaAttribution(
     modifier: Modifier = Modifier,
 ) {
     if (content == null) return
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(0.dp)) {
-        content.pageUrl?.let { url ->
-            TextButton(
-                onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) },
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
-            ) {
-                Text("Description source: Wikipedia/Wikidata · CC BY-SA/CC0")
-            }
-        }
-        content.imageUrl?.let {
-            val label = content.imageCredit?.let { credit -> "Photo: $credit" }
-                ?: "Photo source: Wikimedia Commons"
-            TextButton(
-                onClick = {
-                    val url = content.imageSourceUrl ?: content.imageLicenseUrl ?: return@TextButton
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                },
-                enabled = content.imageSourceUrl != null || content.imageLicenseUrl != null,
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
-            ) {
-                Text(label)
-            }
-        }
+    var showSources by remember { mutableStateOf(false) }
+    TextButton(
+        onClick = { showSources = true },
+        modifier = modifier,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp),
+    ) {
+        Text("ⓘ", style = MaterialTheme.typography.labelSmall)
+    }
+    if (showSources) {
+        AlertDialog(
+            onDismissRequest = { showSources = false },
+            title = { Text("Sources") },
+            text = {
+                Column {
+                    content.pageUrl?.let { url ->
+                        TextButton(onClick = {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                        }) {
+                            Text("Text: Wikipedia / Wikidata")
+                        }
+                    }
+                    if (content.imageUrl != null) {
+                        val label = content.imageCredit ?: "Photo details"
+                        TextButton(
+                            onClick = {
+                                val url = content.imageSourceUrl ?: content.imageLicenseUrl
+                                    ?: return@TextButton
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                            },
+                            enabled = content.imageSourceUrl != null || content.imageLicenseUrl != null,
+                        ) {
+                            Text("Photo: $label")
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSources = false }) { Text("Close") }
+            },
+        )
     }
 }
 

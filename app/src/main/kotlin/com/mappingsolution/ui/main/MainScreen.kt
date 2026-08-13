@@ -370,17 +370,6 @@ fun MainScreen(
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
-                TextButton(
-                    onClick = {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.openstreetmap.org/copyright")))
-                    },
-                    modifier = Modifier.align(Alignment.BottomStart),
-                ) {
-                    Text(
-                        text = "© OpenStreetMap contributors",
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                }
                 if (mapError != null) {
                     Box(
                         modifier = Modifier.fillMaxSize(),

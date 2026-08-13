@@ -28,7 +28,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.gson.JsonObject
 import com.mappingsolution.BuildConfig
 import com.mappingsolution.createCircleIcon
-import com.mappingsolution.createHexagonIcon
 import com.mappingsolution.createPinBitmap
 import com.mappingsolution.createSquareIcon
 import com.mappingsolution.data.map.MapStyle
@@ -170,44 +169,6 @@ private fun createPoiSquare(
     val composeCanvas = androidx.compose.ui.graphics.Canvas(androidCanvas)
     val drawScope = CanvasDrawScope()
     val iconSize = size * 0.55f
-    val offset = (size - iconSize) / 2f
-
-    drawScope.draw(density, layoutDirection, composeCanvas, Size(bitmap.width.toFloat(), bitmap.height.toFloat())) {
-        withTransform({ translate(offset, offset) }) {
-            with(painter) {
-                draw(
-                    size = Size(iconSize, iconSize),
-                    colorFilter = ColorFilter.tint(Color.White),
-                )
-            }
-        }
-    }
-    return bitmap
-}
-
-private fun createPoiHexagon(
-    iconKey: String,
-    painter: Painter,
-    density: Density,
-    layoutDirection: LayoutDirection,
-    size: Int = 80,
-): Bitmap {
-    val bitmap = createHexagonIcon(iconKey, size = size)
-    val androidCanvas = android.graphics.Canvas(bitmap)
-
-    if (iconKey == "marker") {
-        val dotPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.WHITE
-            style = android.graphics.Paint.Style.FILL
-        }
-        val cx = size / 2f
-        androidCanvas.drawCircle(cx, cx, size * 0.20f, dotPaint)
-        return bitmap
-    }
-
-    val composeCanvas = androidx.compose.ui.graphics.Canvas(androidCanvas)
-    val drawScope = CanvasDrawScope()
-    val iconSize = size * 0.50f
     val offset = (size - iconSize) / 2f
 
     drawScope.draw(density, layoutDirection, composeCanvas, Size(bitmap.width.toFloat(), bitmap.height.toFloat())) {
@@ -592,7 +553,7 @@ fun MapComponent(
                 val imageId = "pin-osm-$key"
                 if (style.getImage(imageId) == null) {
                     val painter = allPainters[key] ?: placePainterFallback
-                    style.addImage(imageId, createPoiHexagon(key, painter, density, layoutDirection))
+                    style.addImage(imageId, createPoiCircle(key, painter, density, layoutDirection))
                 }
             }
         val features = withContext(Dispatchers.Default) {

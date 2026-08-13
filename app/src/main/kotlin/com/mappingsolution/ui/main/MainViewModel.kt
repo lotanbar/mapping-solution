@@ -140,7 +140,7 @@ class MainViewModel @Inject constructor(
         if (zoom <= NEARBY_POI_MIN_ZOOM) {
             osmRefreshJob?.cancel()
             bulkRefreshJob?.cancel()
-            osmPoiRepository.clear()
+            osmPoiRepository.hide()
             bulkPoiRepository.clear()
             lastDispatchedBounds = null
             return

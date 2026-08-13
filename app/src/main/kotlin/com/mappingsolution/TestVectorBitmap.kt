@@ -231,27 +231,6 @@ fun createSquareIcon(
     return bitmap
 }
 
-/** Creates a hexagonal-head pin for OSM POIs. */
-fun createHexagonIcon(
-    iconKey: String,
-    size: Int = 80,
-): Bitmap {
-    val (bitmap, canvas, bgPaint) = pinCanvas(iconKey, size)
-    val cx = size / 2f
-    val cy = size / 2f
-    val r = size / 2f - 1f
-    val path = Path()
-    for (i in 0 until 6) {
-        val angle = Math.toRadians((-90 + i * 60).toDouble())
-        val x = (cx + r * Math.cos(angle)).toFloat()
-        val y = (cy + r * Math.sin(angle)).toFloat()
-        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-    }
-    path.close()
-    canvas.drawPath(path, bgPaint)
-    return bitmap
-}
-
 /** Creates a circular-head pin for personal POI groups. */
 fun createCircleIcon(
     iconKey: String,
