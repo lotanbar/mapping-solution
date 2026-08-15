@@ -17,7 +17,6 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -27,13 +26,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -92,7 +89,6 @@ fun MainScreen(
     val rasterLayers by viewModel.rasterLayers.collectAsState()
     val baseMapVisible by viewModel.baseMapVisible.collectAsState()
     val searchPreviewLocation by viewModel.searchPreviewLocation.collectAsState()
-    val isPoisLoading by viewModel.isPoisLoading.collectAsState()
     val osmRoadsGeoJson by viewModel.osmRoadsGeoJson.collectAsState()
     // Respect the OSM group-level visibility toggle. Imported POIs are intentionally uncapped.
     val osmGroupVisible = groups.find { it.id == OSM_POI_GROUP_ID }?.isVisible != false
@@ -388,40 +384,6 @@ fun MainScreen(
                             )
                         }
                     }
-                }
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .statusBarsPadding()
-                        .padding(top = 8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    if (isPoisLoading) {
-                        Surface(
-                            shape = MaterialTheme.shapes.large,
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f),
-                            shadowElevation = 2.dp,
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(14.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    "Loading POIs…",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-
                 }
             }
             BottomActionPanel(

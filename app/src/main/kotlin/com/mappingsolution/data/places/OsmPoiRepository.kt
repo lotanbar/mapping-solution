@@ -4,12 +4,18 @@ import android.util.Log
 import com.mappingsolution.data.model.Poi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.math.floor
 import kotlin.math.pow
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -25,6 +31,7 @@ class OsmPoiRepository @Inject constructor(
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+    private val activeLoads = AtomicInteger(0)
 
     @Volatile private var lastFetchedBounds: FetchedBounds? = null
     @Volatile private var fetchedPois: List<Poi> = emptyList()
@@ -59,8 +66,9 @@ class OsmPoiRepository @Inject constructor(
         west: Double,
         zoom: Double,
         includeNatural: Boolean = true,
-    ) = withContext(Dispatchers.IO) {
+    ): Boolean = withContext(Dispatchers.IO) {
         val totalStart = System.currentTimeMillis()
+        var registeredLoad = false
         try {
             val currentBounds = FetchedBounds(north, south, east, west)
             val memoryBounds = lastFetchedBounds
@@ -70,9 +78,11 @@ class OsmPoiRepository @Inject constructor(
                     zoom,
                 )
                 Log.d("OsmPoiRepo", "MEMORY HIT: ${_pois.value.size} POIs — no network fetch")
-                return@withContext
+                return@withContext true
             }
 
+            activeLoads.incrementAndGet()
+            registeredLoad = true
             _isLoading.value = true
             val centerLat = (north + south) / 2.0
             val centerLng = (east + west) / 2.0
@@ -86,7 +96,12 @@ class OsmPoiRepository @Inject constructor(
             Log.d("OsmPoiRepo", "refreshForViewport zoom=%.1f bounds=[N=${"%.4f".format(north)} S=${"%.4f".format(south)} E=${"%.4f".format(east)} W=${"%.4f".format(west)}] cacheKey=$cacheKey prevBounds=$prevBounds".format(zoom))
 
             val cacheStart = System.currentTimeMillis()
-            val cached = cache.loadCovering(south, west, north, east) ?: cache.load(cacheKey)
+            // The center-keyed file is overwhelmingly the common hit. Trying it first avoids
+            // reading and parsing every cache file on every camera idle event.
+            val keyedCache = cache.load(cacheKey)
+            val cached = keyedCache?.takeIf { it.covers(south, west, north, east) }
+                ?: cache.loadCovering(south, west, north, east)
+                ?: keyedCache
             Log.d("OsmPoiRepo", "cache.load took ${System.currentTimeMillis() - cacheStart}ms — hit=${cached != null} covers=${cached?.covers(south, west, north, east)}")
 
             if (cached != null && cached.covers(south, west, north, east)) {
@@ -103,7 +118,17 @@ class OsmPoiRepository @Inject constructor(
                     east = cached.fetchedEast,
                     west = cached.fetchedWest,
                 )
-                return@withContext
+                return@withContext true
+            }
+
+            // A nearby cache entry may not cover the entire viewport, but its overlap is still
+            // useful. Render it immediately while only the missing area is fetched.
+            val immediatelyVisible = (
+                (cached?.pois ?: emptyList()).associateBy { it.id } +
+                    fetchedPois.associateBy { it.id }
+                ).values.filter { it.lat in south..north && it.lng in west..east }
+            if (immediatelyVisible.isNotEmpty()) {
+                _pois.value = selectForZoom(immediatelyVisible, zoom)
             }
 
             // Fetch a modest buffer around the screen so normal panning and returning from a
@@ -119,40 +144,55 @@ class OsmPoiRepository @Inject constructor(
                 Log.d("OsmPoiRepo", "No new strips needed; using ${cachedPois.size} cached POIs — total ${System.currentTimeMillis() - totalStart}ms")
                 _pois.value = selectForZoom(cachedPois, zoom)
                 lastFetchedBounds = currentBounds
-                return@withContext
+                return@withContext true
             }
 
             val fetchStart = System.currentTimeMillis()
-            val stripResults = mutableListOf<List<Poi>>()
-            var stripFetchFailed = false
-            for ((idx, strip) in strips.withIndex()) {
-                val stripStart = System.currentTimeMillis()
-                val result = runCatching {
-                    api.fetchPois(
-                        strip.south, strip.west, strip.north, strip.east,
-                        includeNatural = includeNatural,
-                    )
-                }.getOrElse { e ->
-                    if (e is CancellationException) throw e
-                    Log.e("OsmPoiRepo", "Strip $idx fetch failed", e)
-                    null
-                }
-                Log.d("OsmPoiRepo", "Strip $idx returned ${result?.size ?: "failure"} in ${System.currentTimeMillis() - stripStart}ms")
-                if (result == null) {
-                    stripFetchFailed = true
-                    break
-                }
-                // Empty is a valid successful result for a sparse strip.
-                stripResults += result
+            val basePoisById = (
+                (cached?.pois ?: emptyList()).associateBy { it.id } +
+                    fetchedPois.associateBy { it.id }
+                ).toMutableMap()
+            val resultMutex = Mutex()
+            val stripResults = coroutineScope {
+                strips.mapIndexed { idx, strip ->
+                    async {
+                        val stripStart = System.currentTimeMillis()
+                        val result = runCatching {
+                            api.fetchPois(
+                                strip.south, strip.west, strip.north, strip.east,
+                                includeNatural = includeNatural,
+                            )
+                        }.getOrElse { e ->
+                            if (e is CancellationException) throw e
+                            Log.e("OsmPoiRepo", "Strip $idx fetch failed", e)
+                            null
+                        }
+                        Log.d("OsmPoiRepo", "Strip $idx returned ${result?.size ?: "failure"} in ${System.currentTimeMillis() - stripStart}ms")
+
+                        // Publish each completed strip instead of keeping the map empty until the
+                        // slowest request finishes.
+                        if (result != null) {
+                            val visible = resultMutex.withLock {
+                                result.forEach { basePoisById[it.id] = it }
+                                basePoisById.values.filter {
+                                    it.lat in south..north && it.lng in west..east
+                                }
+                            }
+                            _pois.value = selectForZoom(visible, zoom)
+                        }
+                        result
+                    }
+                }.awaitAll()
             }
 
             // A network/server failure is not an empty map. Keep any existing pins and retry
             // later; most importantly, never cache the failed viewport as a valid empty result.
-            if (stripFetchFailed) {
+            if (stripResults.any { it == null }) {
+                fetchedPois = basePoisById.values.toList()
                 Log.w("OsmPoiRepo", "OSM fetch incomplete; preserving existing POIs and skipping cache")
-                return@withContext
+                return@withContext false
             }
-            val allStripPois = stripResults.flatten()
+            val allStripPois = stripResults.filterNotNull().flatten()
             Log.d("OsmPoiRepo", "All ${strips.size} strip(s) fetched in ${System.currentTimeMillis() - fetchStart}ms — total raw POIs: ${allStripPois.size}")
 
             // Deduplicate: cached + existing in-viewport + freshly fetched strip POIs.
@@ -179,8 +219,11 @@ class OsmPoiRepository @Inject constructor(
             fetchedPois = combined
             Log.d("OsmPoiRepo", "refreshForViewport DONE — ${visiblePois.size}/${inViewport.size} POIs shown, total time ${System.currentTimeMillis() - totalStart}ms")
             lastFetchedBounds = fetchBounds
+            true
         } finally {
-            _isLoading.value = false
+            if (registeredLoad && activeLoads.decrementAndGet() == 0) {
+                _isLoading.value = false
+            }
         }
     }
 

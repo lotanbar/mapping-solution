@@ -590,7 +590,7 @@ fun MapComponent(
                 val bitmapKey = "pin-bulk-$resolvedIcon"
                 if (style.getImage(bitmapKey) == null) {
                     val painter = allPainters[resolvedIcon] ?: placePainterFallback
-                    style.addImage(bitmapKey, createPoiSquare(resolvedIcon, painter, density, layoutDirection))
+                    style.addImage(bitmapKey, createPoiCircle(resolvedIcon, painter, density, layoutDirection))
                 }
             }
 
@@ -886,8 +886,8 @@ private fun setupMapStyle(
             PropertyFactory.iconAllowOverlap(true),
             PropertyFactory.iconIgnorePlacement(true),
             PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
-            PropertyFactory.iconOpacity(1f),
-            PropertyFactory.iconSize(0.988f),
+            PropertyFactory.iconOpacity(0.6f),
+            PropertyFactory.iconSize(0.72f),
         ).apply { minZoom = 6.01f }
     )
     style.addLayer(

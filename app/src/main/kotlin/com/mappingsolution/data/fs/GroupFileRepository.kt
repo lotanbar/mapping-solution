@@ -71,8 +71,6 @@ class GroupFileRepository @Inject constructor(
             try {
                 loadAll()
                 cleanupStaleImports()
-                // Seed default only if no persisted user/imported groups exist yet
-                if (_groups.value.none { it.id != OSM_POI_GROUP_ID }) seedDefault()
             } catch (e: java.io.IOException) {
                 android.util.Log.e("GroupFileRepository", "Storage not accessible on init; permission may be missing", e)
             } catch (e: SecurityException) {
@@ -107,16 +105,6 @@ class GroupFileRepository @Inject constructor(
             storageManager.getBulkManifestFile(g.name, g.id).delete()
         }
         setGroups(_groups.value.filter { g -> stale.none { it.id == g.id } })
-    }
-
-    private suspend fun seedDefault() {
-        val default = Group(
-            name = "Personal POIs",
-            description = "My personal points of interest",
-            iconKey = "marker",
-            color = "#FF2196F3",
-        )
-        insertRaw(default)
     }
 
     private fun insertRaw(group: Group) {

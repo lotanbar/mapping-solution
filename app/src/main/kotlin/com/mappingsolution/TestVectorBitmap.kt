@@ -43,12 +43,12 @@ fun createPinBitmap(
     }
     canvas.drawPath(path, paint)
 
-    // Add a darker stroke for definition
+    // Thin white outline keeps the marker readable over both satellite and dark maps.
     paint.apply {
-        color = Color.BLACK
-        alpha = 60
+        color = Color.WHITE
+        alpha = 230
         style = Paint.Style.STROKE
-        strokeWidth = 4f
+        strokeWidth = 3f
     }
     canvas.drawPath(path, paint)
 
@@ -212,22 +212,35 @@ private fun pinCanvas(iconKey: String, size: Int): Triple<Bitmap, Canvas, Paint>
         close()
     }
     canvas.drawPath(tail, paint)
+    canvas.drawPath(tail, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        alpha = 230
+        style = Paint.Style.STROKE
+        strokeWidth = 3f
+    })
     return Triple(bitmap, canvas, paint)
 }
 
-/** Creates a rounded-square-head pin for imported POIs. */
+/** Creates a rounded-square-head POI pin. */
 fun createSquareIcon(
     iconKey: String,
     size: Int = 80,
 ): Bitmap {
     val (bitmap, canvas, bgPaint) = pinCanvas(iconKey, size)
     val cornerRadius = size * 0.20f
+    val head = RectF(2f, 2f, size - 2f, size - 2f)
     canvas.drawRoundRect(
-        RectF(1f, 1f, size - 1f, size - 1f),
+        head,
         cornerRadius,
         cornerRadius,
         bgPaint,
     )
+    canvas.drawRoundRect(head, cornerRadius, cornerRadius, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        alpha = 230
+        style = Paint.Style.STROKE
+        strokeWidth = 3f
+    })
     return bitmap
 }
 
@@ -238,7 +251,13 @@ fun createCircleIcon(
 ): Bitmap {
     val (bitmap, canvas, bgPaint) = pinCanvas(iconKey, size)
     val cx = size / 2f
-    canvas.drawCircle(cx, cx, cx - 1f, bgPaint)
+    canvas.drawCircle(cx, cx, cx - 2f, bgPaint)
+    canvas.drawCircle(cx, cx, cx - 2f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        alpha = 230
+        style = Paint.Style.STROKE
+        strokeWidth = 3f
+    })
     return bitmap
 }
 

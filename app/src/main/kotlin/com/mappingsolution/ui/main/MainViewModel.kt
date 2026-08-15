@@ -111,8 +111,8 @@ class MainViewModel @Inject constructor(
     private var osmRefreshJob: Job? = null
     private var bulkRefreshJob: Job? = null
 
-    /** Last viewport bounds for which POI fetches were dispatched. */
-    @Volatile private var lastDispatchedBounds: FetchedBounds? = null
+    /** Last viewport bounds for which the OSM POI fetch actually succeeded. */
+    @Volatile private var lastSuccessfulBounds: FetchedBounds? = null
 
     /** Tolerance in degrees (~110 m) used to consider two viewports identical. */
     private val BOUNDS_EPSILON = 0.001
@@ -142,7 +142,7 @@ class MainViewModel @Inject constructor(
             bulkRefreshJob?.cancel()
             osmPoiRepository.hide()
             bulkPoiRepository.clear()
-            lastDispatchedBounds = null
+            lastSuccessfulBounds = null
             return
         }
 
@@ -150,7 +150,7 @@ class MainViewModel @Inject constructor(
         // POI detail screen — same map position, no new data to load).
         // Epsilon of 0.001° ≈ 110 m — well above MapLibre's floating-point jitter on resume.
         val newBounds = FetchedBounds(north, south, east, west)
-        val prev = lastDispatchedBounds
+        val prev = lastSuccessfulBounds
         if (prev != null &&
             kotlin.math.abs(newBounds.north - prev.north) < BOUNDS_EPSILON &&
             kotlin.math.abs(newBounds.south - prev.south) < BOUNDS_EPSILON &&
@@ -161,15 +161,14 @@ class MainViewModel @Inject constructor(
             return
         }
         android.util.Log.d("MainViewModel", "onCameraChanged: PROCEEDING — zoom=$zoom prev=$prev new=$newBounds")
-        lastDispatchedBounds = newBounds
-
         osmRefreshJob?.cancel()
         osmRefreshJob = viewModelScope.launch {
             delay(OSM_FETCH_DEBOUNCE_MS)
-            osmPoiRepository.refreshForViewport(
+            val succeeded = osmPoiRepository.refreshForViewport(
                 north, south, east, west, zoom,
                 includeNatural = true,
             )
+            if (succeeded) lastSuccessfulBounds = newBounds
         }
 
         val allGroups = groups.value
