@@ -19,6 +19,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
 import java.io.File
 import javax.inject.Inject
@@ -58,6 +63,60 @@ class ItemDetailViewModel @Inject constructor(
     private val _state = MutableStateFlow(ItemDetailState())
     val state: StateFlow<ItemDetailState> = _state.asStateFlow()
 
+    val groups = groupRepository.observeAll().map { groups ->
+        groups.filter { !it.isImported && !it.isBulk && it.id != com.mappingsolution.data.places.OSM_POI_GROUP_ID &&
+            it.type == com.mappingsolution.data.model.GroupType.POI }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val bookmark = combine(state, poiRepository.observeAll()) { state, pois ->
+        val detail = state.item as? DetailItem.PoiDetail
+        pois.find { it.sourceId == detail?.poi?.id && it.savedSource == detail?.sourceType }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private val _isSaving = MutableStateFlow(false)
+    val isSaving = _isSaving.asStateFlow()
+
+    fun toggleStar(onError: (String) -> Unit) = changeBookmark(onError) { detail, saved ->
+        if (saved != null) poiRepository.delete(saved)
+        else poiRepository.insert(detail.poi.copy(
+            id = java.util.UUID.randomUUID().toString(),
+            groupId = null,
+            savedSource = detail.sourceType,
+            sourceId = detail.poi.id,
+            sourceGroupId = detail.poi.groupId,
+            // OSM media is enriched on opening, retaining its attribution.
+            mediaPaths = if (detail.sourceType == DestinationSource.OSM) emptyList() else detail.mediaPaths,
+            isVisible = true,
+        ))
+    }
+
+    fun setStarGroup(groupId: String?, onError: (String) -> Unit) = changeBookmark(onError) { _, saved ->
+        if (groupId != null && groups.value.none { it.id == groupId }) return@changeBookmark
+        saved?.let { poiRepository.update(it.copy(groupId = groupId)) }
+    }
+
+    private fun changeBookmark(
+        onError: (String) -> Unit,
+        action: suspend (DetailItem.PoiDetail, Poi?) -> Unit,
+    ) {
+        val detail = _state.value.item as? DetailItem.PoiDetail ?: return
+        if (!detail.isReadOnly || _isSaving.value) return
+        _isSaving.value = true
+        viewModelScope.launch {
+            try {
+                val saved = poiRepository.observeAll().first().find {
+                    it.sourceId == detail.poi.id && it.savedSource == detail.sourceType
+                }
+                action(detail, saved)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                onError("Couldn't save this change. Please try again.")
+            } finally {
+                _isSaving.value = false
+            }
+        }
+    }
+
     init {
         load()
     }
@@ -75,6 +134,27 @@ class ItemDetailViewModel @Inject constructor(
 
     private suspend fun loadPoi() {
         val personalPoi = poiRepository.getById(id)
+        if (personalPoi?.savedSource != null) {
+            val original = personalPoi.copy(
+                id = requireNotNull(personalPoi.sourceId),
+                groupId = personalPoi.sourceGroupId,
+            )
+            _state.value = ItemDetailState(
+                item = DetailItem.PoiDetail(
+                    poi = original,
+                    group = original.groupId?.let { groupRepository.getById(it) },
+                    mediaPaths = personalPoi.mediaPaths,
+                    isReadOnly = true,
+                    sourceType = personalPoi.savedSource,
+                ),
+                isLoading = false,
+            )
+            if (personalPoi.savedSource == DestinationSource.OSM) {
+                osmPoiRepository.registerSearchPois(listOf(original))
+                enrichOsmPoi(original)
+            }
+            return
+        }
         val poi = personalPoi ?: bulkPoiRepository.getById(id) ?: run {
             _state.update { it.copy(isLoading = false) }
             return
@@ -104,8 +184,8 @@ class ItemDetailViewModel @Inject constructor(
                     poi = poi,
                     group = group,
                     mediaPaths = absolutePaths,
-                    isReadOnly = isBulk,
-                    sourceType = if (isBulk) DestinationSource.IMPORTED else DestinationSource.PERSONAL,
+                    isReadOnly = isBulk || group?.isImported == true,
+                    sourceType = if (isBulk || group?.isImported == true) DestinationSource.IMPORTED else DestinationSource.PERSONAL,
                 ),
                 isLoading = false,
             )
@@ -129,8 +209,12 @@ class ItemDetailViewModel @Inject constructor(
             isLoading = false,
         )
 
+        enrichOsmPoi(poi)
+    }
+
+    private suspend fun enrichOsmPoi(poi: Poi) {
         // The POI itself is shown immediately. Wikimedia enrichment is allowed to appear later.
-        val wikimedia = runCatching { osmPoiRepository.fetchWikimediaContent(id) }.getOrElse { null }
+        val wikimedia = runCatching { osmPoiRepository.fetchWikimediaContent(poi.id) }.getOrElse { null }
             ?: return
         val enrichedPoi = if (poi.description.isNullOrBlank() && !wikimedia.description.isNullOrBlank()) {
             poi.copy(description = wikimedia.description)

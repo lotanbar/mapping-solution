@@ -13,8 +13,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlin.math.floor
-import kotlin.math.pow
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -54,7 +52,8 @@ class OsmPoiRepository @Inject constructor(
 
     /**
      * Fetches exploration POIs for the viewport, with buffered in-memory coverage and a 30-day
-     * persistent cache.
+     * persistent cache. All matching POIs in the viewport are published without density or
+     * count limits; the caller controls the minimum zoom.
      *
      * Only the sub-regions of the new viewport NOT already seen this session are queried
      * (see [computeNewStrips]). POIs in scrolling overlap are preserved without re-fetching.
@@ -73,10 +72,7 @@ class OsmPoiRepository @Inject constructor(
             val currentBounds = FetchedBounds(north, south, east, west)
             val memoryBounds = lastFetchedBounds
             if (memoryBounds?.covers(currentBounds) == true) {
-                _pois.value = selectForZoom(
-                    fetchedPois.filter { it.lat in south..north && it.lng in west..east },
-                    zoom,
-                )
+                _pois.value = fetchedPois.filter { it.lat in south..north && it.lng in west..east }
                 Log.d("OsmPoiRepo", "MEMORY HIT: ${_pois.value.size} POIs — no network fetch")
                 return@withContext true
             }
@@ -105,10 +101,7 @@ class OsmPoiRepository @Inject constructor(
             Log.d("OsmPoiRepo", "cache.load took ${System.currentTimeMillis() - cacheStart}ms — hit=${cached != null} covers=${cached?.covers(south, west, north, east)}")
 
             if (cached != null && cached.covers(south, west, north, east)) {
-                val filtered = selectForZoom(
-                    cached.pois.filter { it.lat in south..north && it.lng in west..east },
-                    zoom,
-                )
+                val filtered = cached.pois.filter { it.lat in south..north && it.lng in west..east }
                 Log.d("OsmPoiRepo", "CACHE HIT: ${filtered.size} POIs in viewport (${cached.pois.size} in cache file) — total ${System.currentTimeMillis() - totalStart}ms")
                 _pois.value = filtered
                 fetchedPois = cached.pois
@@ -128,7 +121,7 @@ class OsmPoiRepository @Inject constructor(
                     fetchedPois.associateBy { it.id }
                 ).values.filter { it.lat in south..north && it.lng in west..east }
             if (immediatelyVisible.isNotEmpty()) {
-                _pois.value = selectForZoom(immediatelyVisible, zoom)
+                _pois.value = immediatelyVisible
             }
 
             // Fetch a modest buffer around the screen so normal panning and returning from a
@@ -142,7 +135,7 @@ class OsmPoiRepository @Inject constructor(
                     ?.filter { it.lat in south..north && it.lng in west..east }
                     ?: emptyList()
                 Log.d("OsmPoiRepo", "No new strips needed; using ${cachedPois.size} cached POIs — total ${System.currentTimeMillis() - totalStart}ms")
-                _pois.value = selectForZoom(cachedPois, zoom)
+                _pois.value = cachedPois
                 lastFetchedBounds = currentBounds
                 return@withContext true
             }
@@ -178,7 +171,7 @@ class OsmPoiRepository @Inject constructor(
                                     it.lat in south..north && it.lng in west..east
                                 }
                             }
-                            _pois.value = selectForZoom(visible, zoom)
+                            _pois.value = visible
                         }
                         result
                     }
@@ -214,10 +207,9 @@ class OsmPoiRepository @Inject constructor(
             Log.d("OsmPoiRepo", "cache.store took ${System.currentTimeMillis() - cacheWriteStart}ms — stored ${combined.size} POIs")
 
             val inViewport = combined.filter { it.lat in south..north && it.lng in west..east }
-            val visiblePois = selectForZoom(inViewport, zoom)
-            _pois.value = visiblePois
+            _pois.value = inViewport
             fetchedPois = combined
-            Log.d("OsmPoiRepo", "refreshForViewport DONE — ${visiblePois.size}/${inViewport.size} POIs shown, total time ${System.currentTimeMillis() - totalStart}ms")
+            Log.d("OsmPoiRepo", "refreshForViewport DONE — ${inViewport.size} POIs shown, total time ${System.currentTimeMillis() - totalStart}ms")
             lastFetchedBounds = fetchBounds
             true
         } finally {
@@ -225,26 +217,6 @@ class OsmPoiRepository @Inject constructor(
                 _isLoading.value = false
             }
         }
-    }
-
-    /**
-     * A Wikipedia/Wikidata/image reference is our best free notability signal. Spatial thinning
-     * prevents overlapping markers before the zoom-specific cap is applied.
-     */
-    private fun selectForZoom(pois: List<Poi>, zoom: Double): List<Poi> = spatiallyThin(pois, zoom).sortedWith(
-        compareByDescending<Poi> { it.wikiRef != null || it.imageRefs.isNotEmpty() }
-            .thenByDescending { LANDMARK_PRIORITY[it.iconKey] ?: 0 }
-    ).take(osmPoiLimitForZoom(zoom))
-
-    private fun spatiallyThin(pois: List<Poi>, zoom: Double): List<Poi> {
-        // About one marker per 56 screen pixels, while still leaving sparse views populated.
-        val cellDegrees = (360.0 / 2.0.pow(zoom)) * (56.0 / 256.0)
-        return pois
-            .sortedWith(compareByDescending<Poi> { it.wikiRef != null || it.imageRefs.isNotEmpty() }
-                .thenByDescending { LANDMARK_PRIORITY[it.iconKey] ?: 0 })
-            .distinctBy { poi ->
-                Pair(floor(poi.lat / cellDegrees).toLong(), floor(poi.lng / cellDegrees).toLong())
-            }
     }
 
     /** Hides markers below the zoom threshold without throwing away reusable viewport data. */
@@ -257,18 +229,6 @@ class OsmPoiRepository @Inject constructor(
         _pois.value = emptyList()
         fetchedPois = emptyList()
         lastFetchedBounds = null
-    }
-
-    private companion object {
-        val LANDMARK_PRIORITY = mapOf(
-            "museum" to 10,
-            "attraction" to 9,
-            "castle" to 8,
-            "monument" to 7,
-            "ruins" to 6,
-            "theatre" to 5,
-            "viewpoint" to 4,
-        )
     }
 
     /** Called once on app launch to purge stale cache files. Does not refetch. */

@@ -39,6 +39,7 @@ import com.mappingsolution.data.model.RoutePoint
 import com.mappingsolution.data.recording.RecordingPoint
 import com.mappingsolution.ui.common.IconCatalog
 import com.mappingsolution.data.prefs.ViewportPreference
+import com.mappingsolution.data.places.NEARBY_POI_MIN_ZOOM
 import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
@@ -113,8 +114,9 @@ private fun createPoiCircle(
     density: Density,
     layoutDirection: LayoutDirection,
     size: Int = 80,
+    borderColor: Int = android.graphics.Color.WHITE,
 ): Bitmap {
-    val bitmap = createCircleIcon(iconKey, size = size)
+    val bitmap = createCircleIcon(iconKey, size = size, borderColor = borderColor)
     val androidCanvas = android.graphics.Canvas(bitmap)
 
     // "marker" is a teardrop pin shape — draw a white dot instead for a clean look
@@ -211,7 +213,7 @@ fun MapComponent(
     onMapReady: (MapLibreMap) -> Unit = {},
     onMapDisposed: () -> Unit = {},
     onMapError: (String) -> Unit = {},
-    onDoubleTap: () -> Unit = {},
+    onDoubleTap: (Pair<Double, Double>?) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -242,17 +244,23 @@ fun MapComponent(
     val painters = allPainters
 
     // Generate bitmaps for each group + default, respecting the group's chosen shape
-    val groupBitmaps = remember(groups, painters) {
+    val groupBitmaps = remember(groups, pois, painters) {
         val bitmaps = mutableMapOf<String, Bitmap>()
         groups.forEach { group ->
             val painter = painters[group.iconKey] ?: placePainterFallback
-            bitmaps[group.id] = when (group.shape) {
-                "circle" -> createPoiCircle(group.iconKey, painter, density, layoutDirection)
-                "square" -> createPoiSquare(group.iconKey, painter, density, layoutDirection)
-                else     -> createPoiPin(group.color, painter, density, layoutDirection) // "pin" default
-            }
+            bitmaps[group.id] = createPoiCircle(group.iconKey, painter, density, layoutDirection)
         }
-        bitmaps["default"] = createPoiPin("#2196F3", placePainterFallback, density, layoutDirection)
+        bitmaps["default"] = createPoiCircle("marker", placePainterFallback, density, layoutDirection)
+        pois.asSequence().filter { it.savedSource != null }
+            .map { it.iconKey?.takeIf(String::isNotBlank) ?: "marker" }
+            .distinct()
+            .forEach { iconKey ->
+                val painter = painters[iconKey] ?: placePainterFallback
+                bitmaps["star-$iconKey"] = createPoiCircle(
+                    iconKey, painter, density, layoutDirection,
+                    borderColor = 0xFFFFC107.toInt(),
+                )
+            }
         bitmaps
     }
 
@@ -348,11 +356,21 @@ fun MapComponent(
         val source = style.getSource("poi-source") as? GeoJsonSource ?: return@LaunchedEffect
 
         val hiddenGroupIds = groups.filter { !it.isVisible }.map { it.id }.toSet()
+        val importedGroupIds = groups.filter { it.isImported }.map { it.id }.toSet()
+        val savedImportedIds = pois.asSequence()
+            .filter { it.savedSource == com.mappingsolution.data.model.DestinationSource.IMPORTED }
+            .mapNotNull { it.sourceId }
+            .toSet()
         val features = withContext(Dispatchers.Default) {
             pois.filter { poi ->
-                poi.isVisible && (poi.groupId == null || poi.groupId !in hiddenGroupIds)
+                val hiddenByStar = poi.savedSource == null && poi.groupId in importedGroupIds && poi.id in savedImportedIds
+                poi.isVisible && !hiddenByStar && (poi.groupId == null || poi.groupId !in hiddenGroupIds)
             }.map { poi ->
-                val iconId = "pin-${poi.groupId ?: "default"}"
+                val iconId = if (poi.savedSource != null) {
+                    "pin-star-${poi.iconKey?.takeIf(String::isNotBlank) ?: "marker"}"
+                } else {
+                    "pin-${poi.groupId ?: "default"}"
+                }
                 val props = JsonObject().apply {
                     addProperty("poiId", poi.id)
                     addProperty("icon-id", iconId)
@@ -364,16 +382,18 @@ fun MapComponent(
         source.setGeoJson(FeatureCollection.fromFeatures(features))
     }
 
-    // Fly to requested location and reset bearing to north
+    // Recenter on a requested location while preserving the user's zoom level.
     LaunchedEffect(flyToLocation) {
         val (lat, lng) = flyToLocation ?: return@LaunchedEffect
         val map = mapState.value ?: return@LaunchedEffect
+        val current = map.cameraPosition
         val camera = CameraPosition.Builder()
             .target(LatLng(lat, lng))
-            .zoom(17.0)
-            .bearing(0.0)
+            .zoom(current.zoom)
+            .bearing(current.bearing)
+            .tilt(current.tilt)
             .build()
-        map.animateCamera(CameraUpdateFactory.newCameraPosition(camera), 1200)
+        map.animateCamera(CameraUpdateFactory.newCameraPosition(camera), 700)
     }
 
     // Search preview: fly to result + show red pin; clear pin when null
@@ -620,14 +640,18 @@ fun MapComponent(
                 context,
                 object : android.view.GestureDetector.SimpleOnGestureListener() {
                     override fun onDoubleTap(e: android.view.MotionEvent): Boolean {
-                        onDoubleTapRef.value()
+                        val location = mapState.value?.locationComponent?.lastKnownLocation
+                            ?.let { it.latitude to it.longitude }
+                        onDoubleTapRef.value(location)
                         return true
                     }
+
+                    override fun onDoubleTapEvent(e: android.view.MotionEvent): Boolean = true
                 }
             )
             mapView.setOnTouchListener { _, event ->
+                // Consume the second tap so MapLibre cannot also interpret it as zoom.
                 gestureDetector.onTouchEvent(event)
-                false
             }
             mapView.addOnDidFailLoadingMapListener {
                 onMapErrorRef.value("Map failed to load. Check your API key or connection.")
@@ -888,7 +912,7 @@ private fun setupMapStyle(
             PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
             PropertyFactory.iconOpacity(0.6f),
             PropertyFactory.iconSize(0.72f),
-        ).apply { minZoom = 6.01f }
+        ).apply { minZoom = (NEARBY_POI_MIN_ZOOM + 0.01).toFloat() }
     )
     style.addLayer(
         SymbolLayer("osm-poi-symbols", "osm-poi-source").withProperties(
@@ -898,7 +922,7 @@ private fun setupMapStyle(
             PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
             PropertyFactory.iconOpacity(1f),
             PropertyFactory.iconSize(0.806f),
-        ).apply { minZoom = 6.01f }
+        ).apply { minZoom = (NEARBY_POI_MIN_ZOOM + 0.01).toFloat() }
     )
     style.addLayer(
         SymbolLayer("poi-symbols", "poi-source").withProperties(
@@ -907,8 +931,8 @@ private fun setupMapStyle(
             PropertyFactory.iconIgnorePlacement(true),
             PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
             PropertyFactory.iconOpacity(1f),
-            PropertyFactory.iconSize(1.131f),
-        ).apply { minZoom = 6.01f }
+            PropertyFactory.iconSize(0.806f),
+        ).apply { minZoom = (NEARBY_POI_MIN_ZOOM + 0.01).toFloat() }
     )
     style.addLayer(
         SymbolLayer("search-preview-symbol", "search-preview-source").withProperties(

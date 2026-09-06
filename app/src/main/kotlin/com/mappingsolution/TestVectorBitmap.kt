@@ -195,7 +195,11 @@ private fun desaturateColor(color: Int, factor: Float = 0.75f): Int {
     return Color.HSVToColor(hsv)
 }
 
-private fun pinCanvas(iconKey: String, size: Int): Triple<Bitmap, Canvas, Paint> {
+private fun pinCanvas(
+    iconKey: String,
+    size: Int,
+    borderColor: Int = Color.WHITE,
+): Triple<Bitmap, Canvas, Paint> {
     val height = (size * 1.30f).toInt()
     val bitmap = Bitmap.createBitmap(size, height, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
@@ -213,7 +217,7 @@ private fun pinCanvas(iconKey: String, size: Int): Triple<Bitmap, Canvas, Paint>
     }
     canvas.drawPath(tail, paint)
     canvas.drawPath(tail, Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = borderColor
         alpha = 230
         style = Paint.Style.STROKE
         strokeWidth = 3f
@@ -248,12 +252,13 @@ fun createSquareIcon(
 fun createCircleIcon(
     iconKey: String,
     size: Int = 80,
+    borderColor: Int = Color.WHITE,
 ): Bitmap {
-    val (bitmap, canvas, bgPaint) = pinCanvas(iconKey, size)
+    val (bitmap, canvas, bgPaint) = pinCanvas(iconKey, size, borderColor)
     val cx = size / 2f
     canvas.drawCircle(cx, cx, cx - 2f, bgPaint)
     canvas.drawCircle(cx, cx, cx - 2f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = borderColor
         alpha = 230
         style = Paint.Style.STROKE
         strokeWidth = 3f

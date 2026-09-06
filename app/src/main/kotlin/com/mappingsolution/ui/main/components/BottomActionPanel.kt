@@ -10,9 +10,11 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -23,6 +25,7 @@ import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,6 +49,7 @@ fun BottomActionPanel(
     onResumeRecording: () -> Unit = {},
     onStopRecording: () -> Unit = {},
     onColorChange: (String) -> Unit = {},
+    isPoisLoading: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val isRecording = recordingState is RecordingState.Active
@@ -75,6 +79,15 @@ fun BottomActionPanel(
     val recordIconTint = if (isRecording) Color.Red.copy(alpha = flashAlpha) else Color.White
 
     Column(modifier = modifier.fillMaxWidth().navigationBarsPadding()) {
+        Box(modifier = Modifier.fillMaxWidth().height(2.dp)) {
+            if (isPoisLoading) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().height(2.dp),
+                    color = Color(0xFF2196F3),
+                    trackColor = Color.Transparent,
+                )
+            }
+        }
         // Main 4-button row — always visible
         Row(
             modifier = Modifier

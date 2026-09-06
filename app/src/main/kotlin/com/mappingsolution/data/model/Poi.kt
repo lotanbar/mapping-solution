@@ -21,4 +21,8 @@ data class Poi(
     val imageSearchNames: List<String> = emptyList(),
     /** Exact image references supplied by OSM (Panoramax, KartaView, Flickr, etc.). */
     val imageRefs: List<String> = emptyList(),
+    /** A personal bookmark of an external POI; the original remains in its source. */
+    val savedSource: DestinationSource? = null,
+    val sourceId: String? = null,
+    val sourceGroupId: String? = null,
 )

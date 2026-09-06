@@ -106,7 +106,7 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
         }
     }
 
-    /** Fetches the deliberately narrow exploration categories used by the map. */
+    /** Fetches durable travel, cultural, historic, and outdoor POIs used by the map. */
     suspend fun fetchPois(
         south: Double,
         west: Double,
@@ -115,18 +115,27 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
         includeNatural: Boolean = true,
     ): List<Poi>? {
         val naturalQueries = if (includeNatural) """
-              nwr[natural~"^(cave_entrance|waterfall|glacier|hot_spring|geyser)${'$'}"][name];
+              nwr[natural~"^(cave_entrance|waterfall|glacier|hot_spring|geyser|peak|volcano|rock|stone|arch|cliff|valley)${'$'}"][name];
+              nwr[waterway=waterfall][name];
+              nwr[mountain_pass=yes][name];
+              nwr[geological][name];
         """.trimIndent() else ""
         val query = """
             [out:json][timeout:$OVERPASS_QUERY_TIMEOUT_SECONDS][bbox:$south,$west,$north,$east];
             (
               $naturalQueries
-              nwr[amenity=place_of_worship][name](if: t["religion"] != "jewish" && t["religion"] != "muslim");
+              nwr[amenity=place_of_worship][name](if: t["religion"] != "jewish" && t["building"] != "synagogue");
+              nwr[amenity=monastery][name];
+              nwr[amenity=shelter][name];
               nwr[amenity=planetarium][name];
-              nwr[historic~"^(archaeological_site|castle|ruins|fort|city_gate)${'$'}"][name];
-              nwr[tourism~"^(museum|gallery|zoo|aquarium|viewpoint)${'$'}"][name];
+              nwr[historic~"^(archaeological_site|castle|ruins|fort|city_gate|monument|memorial|battlefield|tomb|palace|manor|monastery|aqueduct|bridge|wreck)${'$'}"][name];
+              nwr[tourism~"^(museum|gallery|zoo|aquarium|viewpoint|camp_site|alpine_hut|wilderness_hut)${'$'}"][name];
+              nwr[tourism=information][information~"^(guidepost|visitor_centre|office)${'$'}"][name];
+              nwr[highway=trailhead][name];
               nwr[leisure=garden]["garden:type"=botanical][name];
               nwr[man_made~"^(lighthouse|observatory)${'$'}"][name];
+              nwr[man_made=tower]["tower:type"=observation][name];
+              nwr[heritage][name];
             );
             out tags center qt;
         """.trimIndent()
@@ -352,10 +361,10 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
         const val OVERPASS_CALL_TIMEOUT_SECONDS = 12L
         const val ENDPOINT_COOLDOWN_MS = 5 * 60 * 1_000L
         const val LAST_HEALTHY_MAX_AGE_MS = 10 * 60 * 1_000L
-        val EXCLUDED_RELIGIONS = setOf("jewish", "muslim")
-        val EXCLUDED_WORSHIP_BUILDINGS = setOf("synagogue", "mosque")
+        val EXCLUDED_RELIGIONS = setOf("jewish")
+        val EXCLUDED_WORSHIP_BUILDINGS = setOf("synagogue")
         val EXCLUDED_WORSHIP_WORDS = listOf(
-            "synagogue", "synagoge", "sinagoga", "mosque", "masjid", "בית כנסת", "מסגד", "مسجد",
+            "synagogue", "synagoge", "sinagoga", "בית כנסת", "בתי כנסת", "كنيس",
         )
         const val USER_AGENT =
             "mapping-solution/1.0 (https://github.com/lotanbar/mapping-solution)"

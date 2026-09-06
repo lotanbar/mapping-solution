@@ -22,6 +22,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Navigation
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
@@ -61,6 +63,7 @@ import com.mappingsolution.data.model.PlanDestination
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.data.places.WikimediaContent
 import com.mappingsolution.ui.common.TopToast
+import com.mappingsolution.ui.common.GroupPickerField
 import com.mappingsolution.ui.poi.NoMediaPlaceholder
 import com.mappingsolution.ui.poi.PoiGroupSourceIcon
 import com.mappingsolution.ui.poi.PoiInfoBlock
@@ -84,6 +87,9 @@ fun ItemDetailScreen(
     viewModel: ItemDetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val groups by viewModel.groups.collectAsState()
+    val bookmark by viewModel.bookmark.collectAsState()
+    val isSaving by viewModel.isSaving.collectAsState()
     val context = LocalContext.current
     var topToastMessage by remember { mutableStateOf<String?>(null) }
 
@@ -129,6 +135,12 @@ fun ItemDetailScreen(
                 onNavigate = onNavigate,
                 onAddToPlan = onAddToPlan,
                 onShowMessage = { topToastMessage = it },
+                bookmarkGroupId = bookmark?.groupId,
+                groups = groups,
+                isStarred = bookmark != null,
+                isSaving = isSaving,
+                onStarClick = { viewModel.toggleStar { topToastMessage = it } },
+                onStarGroupSelected = { viewModel.setStarGroup(it) { message -> topToastMessage = message } },
                 context = context,
             )
 
@@ -161,6 +173,12 @@ private fun PoiDetailContent(
     onNavigate: ((lat: Double, lng: Double) -> Unit)? = null,
     onAddToPlan: ((PlanDestination) -> Unit)? = null,
     onShowMessage: (String) -> Unit = {},
+    bookmarkGroupId: String? = null,
+    groups: List<com.mappingsolution.data.model.Group> = emptyList(),
+    isStarred: Boolean = false,
+    isSaving: Boolean = false,
+    onStarClick: () -> Unit = {},
+    onStarGroupSelected: (String?) -> Unit = {},
     context: android.content.Context,
 ) {
     val poi = item.poi
@@ -171,6 +189,12 @@ private fun PoiDetailContent(
             item = item,
             modifier = modifier,
             onOpenMediaPreview = onOpenMediaPreview,
+            bookmarkGroupId = bookmarkGroupId,
+            groups = groups,
+            isStarred = isStarred,
+            isSaving = isSaving,
+            onStarClick = onStarClick,
+            onStarGroupSelected = onStarGroupSelected,
             context = context,
         )
         return
@@ -214,6 +238,13 @@ private fun PoiDetailContent(
         if (fromSearch) {
             SearchContextBottomBar(
                 modifier = Modifier.align(Alignment.BottomCenter),
+                showStar = isReadOnly,
+                bookmarkGroupId = bookmarkGroupId,
+                groups = groups,
+                isStarred = isStarred,
+                isSaving = isSaving,
+                onStarClick = onStarClick,
+                onStarGroupSelected = onStarGroupSelected,
                 onNavigateClick = { onNavigate?.invoke(poi.lat, poi.lng) },
                 onAddToPlanClick = {
                     val dest = PlanDestination(
@@ -314,6 +345,13 @@ private fun RouteDetailContent(
 @Composable
 private fun SearchContextBottomBar(
     modifier: Modifier = Modifier,
+    showStar: Boolean,
+    bookmarkGroupId: String?,
+    groups: List<com.mappingsolution.data.model.Group>,
+    isStarred: Boolean,
+    isSaving: Boolean,
+    onStarClick: () -> Unit,
+    onStarGroupSelected: (String?) -> Unit,
     onNavigateClick: () -> Unit,
     onAddToPlanClick: () -> Unit,
 ) {
@@ -322,21 +360,39 @@ private fun SearchContextBottomBar(
         color = MaterialTheme.colorScheme.surface,
         shadowElevation = 8.dp,
     ) {
-        Row(
+        Column(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Button(
-                onClick = onNavigateClick,
-                modifier = Modifier.weight(1f).height(52.dp),
-            ) {
-                Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Navigate")
+            if (showStar && isStarred) {
+                GroupPickerField(
+                    groups = groups,
+                    selectedGroupId = bookmarkGroupId,
+                    onGroupSelected = onStarGroupSelected,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (showStar) {
+                    StarButton(
+                        isStarred = isStarred,
+                        isSaving = isSaving,
+                        onClick = onStarClick,
+                        modifier = Modifier.weight(1f).height(52.dp),
+                    )
+                }
+                Button(
+                    onClick = onNavigateClick,
+                    modifier = Modifier.weight(1f).height(52.dp),
+                ) {
+                    Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Navigate")
+                }
             }
             Button(
                 onClick = onAddToPlanClick,
-                modifier = Modifier.weight(1f).height(52.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
             ) {
                 Text("Add to Plan")
             }
@@ -345,10 +401,37 @@ private fun SearchContextBottomBar(
 }
 
 @Composable
+private fun StarButton(
+    isStarred: Boolean,
+    isSaving: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = !isSaving,
+        modifier = modifier,
+    ) {
+        Icon(
+            imageVector = if (isStarred) Icons.Default.Star else Icons.Outlined.StarBorder,
+            contentDescription = if (isStarred) "Remove star" else "Star POI",
+            tint = if (isStarred) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(28.dp),
+        )
+    }
+}
+
+@Composable
 private fun ReadOnlyPoiFullLayout(
     item: DetailItem.PoiDetail,
     modifier: Modifier = Modifier,
     onOpenMediaPreview: (poiId: String, index: Int, paths: List<String>) -> Unit,
+    bookmarkGroupId: String?,
+    groups: List<com.mappingsolution.data.model.Group>,
+    isStarred: Boolean,
+    isSaving: Boolean,
+    onStarClick: () -> Unit,
+    onStarGroupSelected: (String?) -> Unit,
     context: android.content.Context,
 ) {
     val poi = item.poi
@@ -428,17 +511,34 @@ private fun ReadOnlyPoiFullLayout(
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 8.dp,
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Button(
-                    onClick = { NavigationIntentHelper.launchSingleNavigation(context, poi.lat, poi.lng) },
-                    modifier = Modifier.fillMaxWidth().height(64.dp),
+                if (isStarred) {
+                    GroupPickerField(
+                        groups = groups,
+                        selectedGroupId = bookmarkGroupId,
+                        onGroupSelected = onStarGroupSelected,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Icon(Icons.Default.Navigation, contentDescription = "Navigate", modifier = Modifier.size(28.dp))
+                    StarButton(
+                        isStarred = isStarred,
+                        isSaving = isSaving,
+                        onClick = onStarClick,
+                        modifier = Modifier.weight(1f).height(64.dp),
+                    )
+                    Button(
+                        onClick = { NavigationIntentHelper.launchSingleNavigation(context, poi.lat, poi.lng) },
+                        modifier = Modifier.weight(1f).height(64.dp),
+                    ) {
+                        Icon(Icons.Default.Navigation, contentDescription = "Navigate", modifier = Modifier.size(28.dp))
+                    }
                 }
             }
         }

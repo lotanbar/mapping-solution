@@ -90,10 +90,15 @@ fun MainScreen(
     val baseMapVisible by viewModel.baseMapVisible.collectAsState()
     val searchPreviewLocation by viewModel.searchPreviewLocation.collectAsState()
     val osmRoadsGeoJson by viewModel.osmRoadsGeoJson.collectAsState()
+    val isPoisLoading by viewModel.isPoisLoading.collectAsState()
     // Respect the OSM group-level visibility toggle. Imported POIs are intentionally uncapped.
     val osmGroupVisible = groups.find { it.id == OSM_POI_GROUP_ID }?.isVisible != false
-    val bulkPois = bulkPoisRaw
-    val osmPois = if (osmGroupVisible) osmPoisRaw else emptyList()
+    val savedOsmIds = pois.asSequence().filter { it.savedSource == com.mappingsolution.data.model.DestinationSource.OSM }
+        .mapNotNull { it.sourceId }.toSet()
+    val savedImportedIds = pois.asSequence().filter { it.savedSource == com.mappingsolution.data.model.DestinationSource.IMPORTED }
+        .mapNotNull { it.sourceId }.toSet()
+    val bulkPois = bulkPoisRaw.filterNot { it.id in savedImportedIds }
+    val osmPois = if (osmGroupVisible) osmPoisRaw.filterNot { it.id in savedOsmIds } else emptyList()
 
     var isFetchingLocation by remember { mutableStateOf(false) }
     var locationError by remember { mutableStateOf<String?>(null) }
@@ -350,13 +355,16 @@ fun MainScreen(
                     },
                     onMapReady = { map -> viewModel.mapHolder.register(map) },
                     onMapDisposed = { viewModel.mapHolder.unregister() },
-                    onDoubleTap = {
+                    onDoubleTap = { mapLocation ->
                         val hasPerm = ContextCompat.checkSelfPermission(
                             context, Manifest.permission.ACCESS_FINE_LOCATION
                         ) == PackageManager.PERMISSION_GRANTED
                         when {
                             !hasPerm -> permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
                             !isLocationEnabled(context) -> locationServicesDisabled = true
+                            mapLocation != null && isValidCoordinate(mapLocation.first, mapLocation.second) -> {
+                                flyToTarget = mapLocation
+                            }
                             else -> scope.launch {
                                 val loc = withTimeoutOrNull(10_000L) { fetchCurrentLocation(context) }
                                 if (loc != null) flyToTarget = loc
@@ -387,6 +395,7 @@ fun MainScreen(
                 }
             }
             BottomActionPanel(
+                isPoisLoading = isPoisLoading,
                 onAddPoi = {                    val hasPerm = ContextCompat.checkSelfPermission(
                         context, Manifest.permission.ACCESS_FINE_LOCATION
                     ) == PackageManager.PERMISSION_GRANTED

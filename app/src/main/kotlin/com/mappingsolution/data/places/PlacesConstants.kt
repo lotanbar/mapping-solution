@@ -65,15 +65,8 @@ fun computeNewStrips(new: FetchedBounds, prev: FetchedBounds?): List<FetchedBoun
 
 const val OSM_POI_GROUP_ID = "osm-poi-group"
 
-const val NEARBY_POI_MIN_ZOOM = 6.0
+const val NEARBY_POI_MIN_ZOOM = 11.0
 
 const val OSM_FETCH_DEBOUNCE_MS = 300L
 const val OSM_CACHE_TTL_MS = 30L * 24 * 60 * 60 * 1000   // 30 days
-
-/** Broad exploration views get more candidates; close views stay intentionally focused. */
-fun osmPoiLimitForZoom(zoom: Double): Int = when {
-    zoom < 9.0 -> 60
-    zoom < 12.0 -> 40
-    else -> 20
-}
 

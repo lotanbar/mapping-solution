@@ -138,6 +138,6 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
     )
 
     private companion object {
-        const val CACHE_VERSION = 10
+        const val CACHE_VERSION = 11
     }
 }

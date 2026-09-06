@@ -170,6 +170,13 @@ class PoiFileRepository @Inject constructor(private val storageManager: StorageM
             put("isVisible", poi.isVisible)
             put("createdAt", poi.createdAt)
             put("updatedAt", poi.updatedAt)
+            poi.iconKey?.let { put("iconKey", it) }
+            poi.wikiRef?.let { put("wikiRef", it) }
+            if (poi.imageSearchNames.isNotEmpty()) put("imageSearchNames", JSONArray(poi.imageSearchNames))
+            if (poi.imageRefs.isNotEmpty()) put("imageRefs", JSONArray(poi.imageRefs))
+            poi.savedSource?.let { put("savedSource", it.name) }
+            poi.sourceId?.let { put("sourceId", it) }
+            poi.sourceGroupId?.let { put("sourceGroupId", it) }
         }
         storageManager.getPoiFile(poi.name, poi.id, poi.groupId).writeText(json.toString())
     }
@@ -178,6 +185,12 @@ class PoiFileRepository @Inject constructor(private val storageManager: StorageM
         val json = JSONObject(file.readText())
         val mediaArr = json.optJSONArray("mediaPaths")
         val mediaPaths = if (mediaArr != null) List(mediaArr.length()) { mediaArr.getString(it) } else emptyList()
+        val imageSearchNames = json.optJSONArray("imageSearchNames")?.let { array ->
+            List(array.length()) { array.getString(it) }
+        }.orEmpty()
+        val imageRefs = json.optJSONArray("imageRefs")?.let { array ->
+            List(array.length()) { array.getString(it) }
+        }.orEmpty()
         Poi(
             id = json.getString("id"),
             groupId = json.optString("groupId").takeIf { it.isNotEmpty() },
@@ -190,6 +203,15 @@ class PoiFileRepository @Inject constructor(private val storageManager: StorageM
             isVisible = json.optBoolean("isVisible", true),
             createdAt = json.getLong("createdAt"),
             updatedAt = json.getLong("updatedAt"),
+            iconKey = json.optString("iconKey").takeIf { it.isNotEmpty() },
+            wikiRef = json.optString("wikiRef").takeIf { it.isNotEmpty() },
+            imageSearchNames = imageSearchNames,
+            imageRefs = imageRefs,
+            savedSource = json.optString("savedSource").takeIf { it.isNotEmpty() }?.let { value ->
+                runCatching { com.mappingsolution.data.model.DestinationSource.valueOf(value) }.getOrNull()
+            },
+            sourceId = json.optString("sourceId").takeIf { it.isNotEmpty() },
+            sourceGroupId = json.optString("sourceGroupId").takeIf { it.isNotEmpty() },
         )
     } catch (_: Exception) { null }
 }
