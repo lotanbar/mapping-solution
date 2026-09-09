@@ -744,9 +744,10 @@ fun LibraryScreen(
                                 selectionMode = selectionMode,
                                 indented = true,
                                 onTap = {
-                                    // Grouped POI rows are not directly tappable for editing
-                                    if (selectionMode is LibrarySelectionMode.RowSelection) {
-                                        viewModel.toggleRowSelection(poi.id)
+                                    when (selectionMode) {
+                                        is LibrarySelectionMode.None -> onEditPoi(poi.id)
+                                        is LibrarySelectionMode.RowSelection -> viewModel.toggleRowSelection(poi.id)
+                                        else -> Unit
                                     }
                                 },
                                 onLongPress = {

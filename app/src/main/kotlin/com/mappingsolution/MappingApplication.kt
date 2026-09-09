@@ -8,7 +8,6 @@ import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import coil.Coil
 import coil.ImageLoader
-import coil.decode.VideoFrameDecoder
 import okhttp3.Interceptor
 import com.mappingsolution.data.image.ZipImageFetcher
 import com.mappingsolution.data.map.MbTilesInterceptor
@@ -65,7 +64,6 @@ class MappingApplication : Application(), Configuration.Provider {
                         .build()
                 )
                 .components {
-                    add(VideoFrameDecoder.Factory())
                     add(ZipImageFetcher.Factory())
                 }
                 .build()

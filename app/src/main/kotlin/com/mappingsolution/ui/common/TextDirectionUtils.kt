@@ -13,7 +13,10 @@ import androidx.compose.ui.text.style.TextDirection
 fun String.isRtl(): Boolean = any { char ->
     val d = Character.getDirectionality(char)
     d == Character.DIRECTIONALITY_RIGHT_TO_LEFT ||
-        d == Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC
+        d == Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC ||
+        d == Character.DIRECTIONALITY_RIGHT_TO_LEFT_EMBEDDING ||
+        d == Character.DIRECTIONALITY_RIGHT_TO_LEFT_OVERRIDE ||
+        d == Character.DIRECTIONALITY_RIGHT_TO_LEFT_ISOLATE
 }
 
 fun String.resolvedTextDirection(): TextDirection =

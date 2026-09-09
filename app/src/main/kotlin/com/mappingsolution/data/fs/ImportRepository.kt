@@ -618,7 +618,9 @@ class ImportRepository @Inject constructor(
                         }
                         "images" -> {
                             if (inWpt && inExtensions && t.isNotEmpty()) {
-                                t.split(",").map { it.trim() }.filter { it.isNotEmpty() }.forEach { wptImages.add(it) }
+                                t.split(",").map { it.trim() }
+                                    .filter(com.mappingsolution.data.model.MediaUtils::isSupported)
+                                    .forEach { wptImages.add(it) }
                             }
                         }
                         "extensions" -> if (inWpt) inExtensions = false

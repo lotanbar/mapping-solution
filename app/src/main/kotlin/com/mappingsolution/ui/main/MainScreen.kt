@@ -18,7 +18,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -322,7 +321,7 @@ fun MainScreen(
         )
     }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 MapComponent(

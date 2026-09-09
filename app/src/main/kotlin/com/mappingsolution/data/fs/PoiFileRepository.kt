@@ -1,6 +1,7 @@
 package com.mappingsolution.data.fs
 
 import com.mappingsolution.data.model.Poi
+import com.mappingsolution.data.model.MediaUtils
 import com.mappingsolution.data.util.StorageManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -184,7 +185,9 @@ class PoiFileRepository @Inject constructor(private val storageManager: StorageM
     private fun readPoi(file: File): Poi? = try {
         val json = JSONObject(file.readText())
         val mediaArr = json.optJSONArray("mediaPaths")
-        val mediaPaths = if (mediaArr != null) List(mediaArr.length()) { mediaArr.getString(it) } else emptyList()
+        val mediaPaths = if (mediaArr != null) {
+            List(mediaArr.length()) { mediaArr.getString(it) }.filter(MediaUtils::isSupported)
+        } else emptyList()
         val imageSearchNames = json.optJSONArray("imageSearchNames")?.let { array ->
             List(array.length()) { array.getString(it) }
         }.orEmpty()

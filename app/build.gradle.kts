@@ -72,7 +72,6 @@ dependencies {
 
     // Coil
     implementation("io.coil-kt:coil-compose:2.7.0")
-    implementation("io.coil-kt:coil-video:2.7.0")
 
     // Hilt
     implementation(libs.hilt.android)
@@ -98,4 +97,5 @@ dependencies {
     implementation("sh.calvin.reorderable:reorderable:2.4.0")
 
     debugImplementation(libs.androidx.compose.ui.tooling)
+    testImplementation("junit:junit:4.13.2")
 }

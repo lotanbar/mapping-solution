@@ -55,8 +55,8 @@ import com.mappingsolution.ui.library.GroupFormViewModel
 import com.mappingsolution.ui.library.IconPickerScreen
 import com.mappingsolution.ui.library.LibraryScreen
 import com.mappingsolution.ui.main.MainScreen
-import com.mappingsolution.ui.detail.ItemDetailScreen
-import com.mappingsolution.ui.poi.PoiFormScreen
+import com.mappingsolution.ui.detail.RouteDetailScreen
+import com.mappingsolution.ui.poi.UnifiedPoiScreen
 import com.mappingsolution.ui.poi.media.MediaPreviewScreen
 import com.mappingsolution.ui.recording.RouteFinalizeScreen
 import com.mappingsolution.ui.searchnplan.NavigationIntentHelper
@@ -80,10 +80,9 @@ private const val ROUTE_LIBRARY = "library"
 private const val ROUTE_GROUP_FORM = "group_form"
 private const val ROUTE_GROUP_FORM_EDIT = "group_form/{groupId}"
 private const val ROUTE_ICON_PICKER = "icon_picker"
-private const val ROUTE_POI_FORM_NEW = "poi_form_new?lat={lat}&lng={lng}"
+private const val ROUTE_POI_NEW = "poi_new?lat={lat}&lng={lng}"
 private const val ROUTE_ITEM_DETAIL = "item_detail/{type}/{id}?fromSearch={fromSearch}"
 private const val ROUTE_POI_MEDIA_PREVIEW = "poi_media_preview/{poiId}?startIndex={startIndex}"
-private const val ROUTE_POI_FORM_EDIT = "poi_form_edit/{poiId}"
 private const val ROUTE_ROUTE_FINALIZE = "route_finalize/{routeId}"
 /** Edit a saved route from the Library (no discard guard). */
 private const val ROUTE_ROUTE_EDIT = "route_edit/{routeId}"
@@ -173,7 +172,7 @@ fun AppNavGraph() {
 
                 MainScreen(
                     onOpenLibrary = { navController.navigate(ROUTE_LIBRARY) },
-                    onAddPoi = { lat, lng -> navController.navigate("poi_form_new?lat=$lat&lng=$lng") },
+                    onAddPoi = { lat, lng -> navController.navigate("poi_new?lat=$lat&lng=$lng") },
                     onPoiTapped = { poiId -> navController.navigate("item_detail/poi/$poiId") },
                     onRouteTapped = { routeId -> navController.navigate("item_detail/route/$routeId") },
                     onOsmPoiTapped = { osmId -> navController.navigate("item_detail/osm_poi/$osmId") },
@@ -314,17 +313,21 @@ fun AppNavGraph() {
         }
 
         composable(
-            route = ROUTE_POI_FORM_NEW,
+            route = ROUTE_POI_NEW,
             arguments = listOf(
                 navArgument(KEY_LAT) { type = NavType.StringType; defaultValue = "0.0" },
                 navArgument(KEY_LNG) { type = NavType.StringType; defaultValue = "0.0" },
             ),
         ) {
-            PoiFormScreen(
+            UnifiedPoiScreen(
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToMediaPreview = { poiId, index, paths ->
+                onOpenMediaPreview = { poiId, index, paths ->
                     navController.currentBackStackEntry?.savedStateHandle?.set("media_paths", paths)
                     navController.navigate("poi_media_preview/$poiId?startIndex=$index")
+                },
+                onAddToPlan = { dest ->
+                    navController.getBackStackEntry(ROUTE_MAIN).savedStateHandle[KEY_ADDED_DESTINATION] = dest
+                    navController.popBackStack(ROUTE_MAIN, false)
                 },
                 onCreateGroup = { navController.navigate(ROUTE_GROUP_FORM) },
             )
@@ -339,24 +342,30 @@ fun AppNavGraph() {
             ),
         ) { backStackEntry ->
             val fromSearch = backStackEntry.arguments?.getBoolean(KEY_FROM_SEARCH) ?: false
-            val context = LocalContext.current
-            ItemDetailScreen(
-                onNavigateBack = { navController.popBackStack() },
-                onNavigateToEditPoi = { poiId -> navController.navigate("poi_form_edit/$poiId") },
-                onNavigateToEditRoute = { routeId -> navController.navigate("route_edit/$routeId") },
-                onOpenMediaPreview = { poiId, index, paths ->
-                    navController.currentBackStackEntry?.savedStateHandle?.set("media_paths", paths)
-                    navController.navigate("poi_media_preview/$poiId?startIndex=$index")
-                },
-                fromSearch = fromSearch,
-                onNavigate = if (fromSearch) { lat, lng ->
-                    NavigationIntentHelper.launchSingleNavigation(context, lat, lng)
-                } else null,
-                onAddToPlan = if (fromSearch) { dest ->
-                    navController.previousBackStackEntry?.savedStateHandle?.set(KEY_ADDED_DESTINATION, dest)
-                    navController.popBackStack()
-                } else null,
-            )
+            if (backStackEntry.arguments?.getString(KEY_DETAIL_TYPE) == "route") {
+                RouteDetailScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    onNavigateToEdit = { routeId -> navController.navigate("route_edit/$routeId") },
+                )
+            } else {
+                UnifiedPoiScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    onOpenMediaPreview = { poiId, index, paths ->
+                        navController.currentBackStackEntry?.savedStateHandle?.set("media_paths", paths)
+                        navController.navigate("poi_media_preview/$poiId?startIndex=$index")
+                    },
+                    onAddToPlan = { dest ->
+                        if (fromSearch) {
+                            navController.previousBackStackEntry?.savedStateHandle?.set(KEY_ADDED_DESTINATION, dest)
+                            navController.popBackStack()
+                        } else {
+                            navController.getBackStackEntry(ROUTE_MAIN).savedStateHandle[KEY_ADDED_DESTINATION] = dest
+                            navController.popBackStack(ROUTE_MAIN, false)
+                        }
+                    },
+                    onCreateGroup = { navController.navigate(ROUTE_GROUP_FORM) },
+                )
+            }
         }
 
         composable(
@@ -371,27 +380,13 @@ fun AppNavGraph() {
             MediaPreviewScreen(paths = paths, startIndex = startIndex)
         }
 
-        composable(
-            route = ROUTE_POI_FORM_EDIT,
-            arguments = listOf(navArgument(KEY_POI_ID) { type = NavType.StringType }),
-        ) {
-            PoiFormScreen(
-                onNavigateBack = { navController.popBackStack() },
-                onNavigateToMediaPreview = { poiId, index, paths ->
-                    navController.currentBackStackEntry?.savedStateHandle?.set("media_paths", paths)
-                    navController.navigate("poi_media_preview/$poiId?startIndex=$index")
-                },
-                onCreateGroup = { navController.navigate(ROUTE_GROUP_FORM) },
-            )
-        }
-
         composable(ROUTE_LIBRARY) {
             val context = LocalContext.current
             LibraryScreen(
                 onNavigateBack = { navController.popBackStack() },
                 onCreateGroup = { navController.navigate(ROUTE_GROUP_FORM) },
                 onEditGroup = { groupId -> navController.navigate("group_form/$groupId") },
-                onEditPoi = { poiId -> navController.navigate("poi_form_edit/$poiId") },
+                onEditPoi = { poiId -> navController.navigate("item_detail/poi/$poiId") },
                 onEditRoute = { routeId -> navController.navigate("route_edit/$routeId") },
                 onOpenPlan = { planId -> navController.navigate("search_n_plan?planId=$planId") },
                 onContinueRecording = { routeId ->

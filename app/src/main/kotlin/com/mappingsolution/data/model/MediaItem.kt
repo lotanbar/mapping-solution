@@ -1,7 +1,7 @@
 package com.mappingsolution.data.model
 
 enum class MediaType {
-    PHOTO, VIDEO, AUDIO
+    PHOTO, AUDIO
 }
 
 data class MediaItem(

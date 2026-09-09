@@ -382,14 +382,14 @@ fun MapComponent(
         source.setGeoJson(FeatureCollection.fromFeatures(features))
     }
 
-    // Recenter on a requested location while preserving the user's zoom level.
+    // Recenter and zoom in far enough to make the user's immediate location useful.
     LaunchedEffect(flyToLocation) {
         val (lat, lng) = flyToLocation ?: return@LaunchedEffect
         val map = mapState.value ?: return@LaunchedEffect
         val current = map.cameraPosition
         val camera = CameraPosition.Builder()
             .target(LatLng(lat, lng))
-            .zoom(current.zoom)
+            .zoom(maxOf(current.zoom, CURRENT_LOCATION_ZOOM))
             .bearing(current.bearing)
             .tilt(current.tilt)
             .build()
@@ -753,6 +753,7 @@ fun MapComponent(
 }
 
 private const val RASTER_SOURCE_PREFIX = "mbtiles-source-"
+private const val CURRENT_LOCATION_ZOOM = 16.0
 private const val RASTER_LAYER_PREFIX = "mbtiles-layer-"
 
 /** Custom layers we add on top of the base map style — never hidden by the base-map toggle. */
@@ -977,6 +978,8 @@ private fun setupMapStyle(
     onMapReady(map)
 }
 
+// Every caller checks ACCESS_FINE_LOCATION immediately before entering this helper.
+@android.annotation.SuppressLint("MissingPermission")
 private fun activateLocationComponent(
     map: org.maplibre.android.maps.MapLibreMap,
     style: org.maplibre.android.maps.Style,

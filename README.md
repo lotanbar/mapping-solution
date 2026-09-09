@@ -7,7 +7,7 @@ An Android app for recording GPS data and monitoring trips. Built with modern Ko
 ## Features
 
 - **Map** — MapTiler satellite hybrid, takes 80% of the screen. Shows POIs and routes toggled from the library.
-- **POIs** — Add at current location, assign to a group (inherits group icon + color), attach photos/videos/audio.
+- **POIs** — Add at current location, assign to a group (inherits group icon + color), and attach photos/audio.
 - **Route recording** — Foreground service with live polyline, pause/resume/stop. Kalman-filtered GPS refined by on-device HMM/Viterbi map-matching (live windowed matcher + full re-match on stop). Auto-saves on force-kill as an *incomplete* recording.
 - **Library** — Browse/search groups, POIs, and routes. Toggle visibility, multi-select, delete, orphan, re-group.
 - **Import** — GPX files only (see below).

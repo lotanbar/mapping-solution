@@ -2,6 +2,7 @@ package com.mappingsolution.data.fs
 
 import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.Poi
+import com.mappingsolution.data.model.MediaUtils
 import com.mappingsolution.data.util.StorageManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -150,7 +151,9 @@ class BulkPoiRepository @Inject constructor(private val storageManager: StorageM
         fun deserializePoi(line: String): Poi {
             val json = JSONObject(line)
             val mediaArr = json.optJSONArray("mediaPaths")
-            val mediaPaths = if (mediaArr != null) List(mediaArr.length()) { mediaArr.getString(it) } else emptyList()
+            val mediaPaths = if (mediaArr != null) {
+                List(mediaArr.length()) { mediaArr.getString(it) }.filter(MediaUtils::isSupported)
+            } else emptyList()
             return Poi(
                 id = json.getString("id"),
                 groupId = json.optString("groupId").takeIf { it.isNotEmpty() },

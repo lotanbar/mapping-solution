@@ -16,6 +16,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import androidx.media3.common.util.UnstableApi
 import coil.compose.AsyncImage
 import com.mappingsolution.data.model.MediaItem
 import com.mappingsolution.data.model.MediaType
@@ -48,8 +49,7 @@ fun MediaPreviewScreen(
         val item = mediaItems[page]
         when (item.type) {
             MediaType.PHOTO -> ZoomableImage(path = item.path)
-            MediaType.VIDEO -> VideoPlayer(path = item.path, isAudio = false)
-            MediaType.AUDIO -> VideoPlayer(path = item.path, isAudio = true)
+            MediaType.AUDIO -> AudioPlayer(path = item.path)
         }
     }
 }
@@ -67,7 +67,8 @@ fun ZoomableImage(path: String) {
 }
 
 @Composable
-fun VideoPlayer(path: String, isAudio: Boolean = false) {
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
+fun AudioPlayer(path: String) {
     val context = LocalContext.current
     val player = remember { ExoPlayer.Builder(context).build() }
     
@@ -81,18 +82,14 @@ fun VideoPlayer(path: String, isAudio: Boolean = false) {
         factory = { ctx -> 
             PlayerView(ctx).apply { 
                 this.player = player 
-                if (isAudio) {
-                    this.controllerShowTimeoutMs = 0
-                    this.controllerHideOnTouch = false
-                    this.useArtwork = true
-                    this.defaultArtwork = androidx.core.content.ContextCompat.getDrawable(ctx, android.R.drawable.ic_media_play)
-                }
+                this.controllerShowTimeoutMs = 0
+                this.controllerHideOnTouch = false
+                this.useArtwork = true
+                this.defaultArtwork = androidx.core.content.ContextCompat.getDrawable(ctx, android.R.drawable.ic_media_play)
             } 
         }, 
         update = { view ->
-            if (isAudio) {
-                view.showController()
-            }
+            view.showController()
         },
         modifier = Modifier.fillMaxSize()
     )

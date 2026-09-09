@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.fillMaxWidth
 import com.mappingsolution.data.model.Group
 import androidx.compose.ui.res.painterResource
 import com.mappingsolution.ui.common.IconCatalog
@@ -43,6 +44,7 @@ fun GroupPickerField(
 ) {
     var expanded by remember { mutableStateOf(false) }
     val selectedGroup = groups.find { it.id == selectedGroupId }
+    val selectedText = selectedGroup?.name ?: "No group"
 
     ExposedDropdownMenuBox(
         expanded = expanded,
@@ -50,9 +52,13 @@ fun GroupPickerField(
         modifier = modifier,
     ) {
         OutlinedTextField(
-            value = selectedGroup?.name ?: "No group",
+            value = selectedText,
             onValueChange = {},
             readOnly = true,
+            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                textDirection = selectedText.resolvedTextDirection(),
+                textAlign = selectedText.resolvedTextAlign(),
+            ),
             label = { Text("Group") },
             leadingIcon = selectedGroup?.let { group ->
                 {
@@ -91,7 +97,16 @@ fun GroupPickerField(
                             modifier = Modifier.size(24.dp),
                         )
                     },
-                    text = { Text(group.name) },
+                    text = {
+                        Text(
+                            group.name,
+                            modifier = Modifier.fillMaxWidth(),
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                textDirection = group.name.resolvedTextDirection(),
+                                textAlign = group.name.resolvedTextAlign(),
+                            ),
+                        )
+                    },
                     onClick = {
                         onGroupSelected(group.id)
                         expanded = false
