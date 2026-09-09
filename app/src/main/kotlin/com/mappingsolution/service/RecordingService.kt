@@ -204,6 +204,7 @@ class RecordingService : Service() {
     }
 
     private fun handlePause() {
+        if (isStopping.get()) return
         stopLocationUpdates()
         val current = recordingRepository.state.value as? RecordingState.Active ?: return
         // Force-commit the matcher's in-flight window so the paused line is complete and the tail
@@ -229,7 +230,9 @@ class RecordingService : Service() {
     }
 
     private fun handleResume() {
+        if (isStopping.get()) return
         val current = recordingRepository.state.value as? RecordingState.Active ?: return
+        if (current.isStopping) return
         val now = System.currentTimeMillis()
         val pausedDuration = if (current.pausedSinceMs != null) now - current.pausedSinceMs else 0L
         recordingRepository.updateState(
@@ -248,8 +251,11 @@ class RecordingService : Service() {
 
     private suspend fun handleStop() {
         if (!isStopping.compareAndSet(false, true)) return
+        // Freeze the user-visible duration at the tap, not after disk/background work finishes.
+        val stoppedAtMs = System.currentTimeMillis()
         stopLocationUpdates()
         val current = recordingRepository.state.value as? RecordingState.Active ?: run { stopSelf(); return }
+        recordingRepository.updateState(current.copy(stoppingAtMs = stoppedAtMs, liveHead = null))
         // Force-commit the online matcher's remaining window (the last few fixes are held back
         // pending lookahead). The matcher is confined to the Main thread, so flush there.
         val flushed = withContext(Dispatchers.Main) { smartTrackProcessor.flush() }
@@ -272,13 +278,13 @@ class RecordingService : Service() {
         // before finalizeStop renames the recording folder; otherwise in-flight writes
         // targeting the old path will fail silently and their points will be lost.
         recordingRepository.awaitPendingWrites()
-        // Full HMM/Viterbi re-match of the whole trip for best final quality, then write
-        // points.jsonl atomically. Returns the authoritative distance recomputed from the result.
-        val matchedDistance = runCatching { recordingRepository.mapMatchTrack(current.routeId) }.getOrNull()
-        val finalDistance = matchedDistance ?: current.distanceMeters
-        val now = System.currentTimeMillis()
-        val durationSec = current.elapsedMs(now) / 1000L
-        recordingRepository.finalizeStop(current.routeId, finalDistance, durationSec)
+        val durationSec = current.elapsedMs(stoppedAtMs) / 1000L
+        recordingRepository.finalizeStop(
+            routeId = current.routeId,
+            distanceMeters = current.distanceMeters,
+            durationSec = durationSec,
+            stoppedAtMs = stoppedAtMs,
+        )
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -378,13 +384,13 @@ class RecordingService : Service() {
             if (isStopping.get()) return@launch
             // Kalman smooth → jump guard → streaming HMM map-matching.
             // Returns committed matched points (lag a few fixes), the raw smoothed position to
-            // persist for the Stop pass, and a provisional live tip.
+            // persist for optional refinement, and a provisional live tip.
             val result = smartTrackProcessor.process(location, speedMps)
 
             val st0 = recordingRepository.state.value as? RecordingState.Active ?: return@launch
             if (st0.isPaused) return@launch
 
-            // Persist the raw smoothed position so the Stop pass can re-match from clean input.
+            // Persist the raw smoothed position so refinement can re-match from clean input.
             result.smoothed?.let { sp ->
                 pendingSmoothed.add(sp)
                 if (pendingSmoothed.size >= 20) flushPendingSmoothed(st0.routeId)

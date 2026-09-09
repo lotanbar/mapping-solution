@@ -30,6 +30,7 @@ import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.data.places.OsmPoiRepository
 import com.mappingsolution.service.ImportWorker
 import com.mappingsolution.service.MbtilesImportWorker
+import com.mappingsolution.service.RouteRefinementWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -65,7 +66,7 @@ sealed interface LibrarySelectionMode {
 
 @HiltViewModel
 class LibraryViewModel @Inject constructor(
-    @ApplicationContext context: Context,
+    @ApplicationContext private val context: Context,
     private val groupRepository: GroupFileRepository,
     private val poiRepository: PoiFileRepository,
     private val routeRepository: RouteFileRepository,
@@ -78,6 +79,12 @@ class LibraryViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val workManager = WorkManager.getInstance(context)
+
+    private val _refiningRouteIds = MutableStateFlow<Set<String>>(emptySet())
+    val refiningRouteIds: StateFlow<Set<String>> = _refiningRouteIds.asStateFlow()
+
+    private val _refinementProgress = MutableStateFlow<Map<String, String>>(emptyMap())
+    val refinementProgress: StateFlow<Map<String, String>> = _refinementProgress.asStateFlow()
 
     // ── Map layer state ───────────────────────────────────────────────────
 
@@ -441,6 +448,31 @@ class LibraryViewModel @Inject constructor(
     private var dismissedWorkId: UUID? = null
 
     init {
+        viewModelScope.launch {
+            workManager.getWorkInfosByTagFlow(RouteRefinementWorker.TAG).collect { infos ->
+                val active = infos.filter {
+                    it.state == WorkInfo.State.RUNNING ||
+                        it.state == WorkInfo.State.ENQUEUED ||
+                        it.state == WorkInfo.State.BLOCKED
+                }
+                _refiningRouteIds.value = active.mapNotNull { info ->
+                    info.tags.firstOrNull {
+                        it.startsWith(RouteRefinementWorker.ROUTE_TAG_PREFIX)
+                    }?.removePrefix(RouteRefinementWorker.ROUTE_TAG_PREFIX)
+                }.toSet()
+                _refinementProgress.value = active.mapNotNull { info ->
+                    val routeId = info.tags.firstOrNull {
+                        it.startsWith(RouteRefinementWorker.ROUTE_TAG_PREFIX)
+                    }?.removePrefix(RouteRefinementWorker.ROUTE_TAG_PREFIX) ?: return@mapNotNull null
+                    val phase = info.progress.getString(RouteRefinementWorker.KEY_PHASE)
+                        ?: if (info.state == WorkInfo.State.RUNNING) "Refining…" else "Queued for refinement"
+                    val done = info.progress.getInt(RouteRefinementWorker.KEY_DONE, 0)
+                    val total = info.progress.getInt(RouteRefinementWorker.KEY_TOTAL, 0)
+                    val progress = if (total > 0) "$phase — ${done * 100 / total}%" else phase
+                    routeId to progress
+                }.toMap()
+            }
+        }
         // Reconnect to any import that was already running when this ViewModel was created
         // (e.g. user navigated away mid-import and returned to the Library screen).
         viewModelScope.launch {
@@ -475,6 +507,14 @@ class LibraryViewModel @Inject constructor(
                 handleMbtilesWorkInfo(info)
             }
         }
+    }
+
+    fun refineRoute(routeId: String) {
+        RouteRefinementWorker.enqueue(context, routeId)
+    }
+
+    fun cancelRouteRefinement(routeId: String) {
+        RouteRefinementWorker.cancel(context, routeId)
     }
 
     private fun handleWorkInfo(info: WorkInfo?) {

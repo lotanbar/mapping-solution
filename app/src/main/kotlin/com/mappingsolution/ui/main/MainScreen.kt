@@ -105,6 +105,10 @@ fun MainScreen(
     var locationLostDuringRecording by remember { mutableStateOf(false) }
     var mapError by remember { mutableStateOf<String?>(null) }
     var showBatteryDialog by remember { mutableStateOf(false) }
+    var showRefinementChoice by remember { mutableStateOf(false) }
+    var routeBeingStopped by remember { mutableStateOf<String?>(null) }
+    var stoppedRouteAwaitingChoice by remember { mutableStateOf<String?>(null) }
+    var selectedRefineNow by remember { mutableStateOf<Boolean?>(null) }
     var flyToTarget by remember { mutableStateOf<Pair<Double, Double>?>(null) }
 
     // Reset flyToTarget to null after each use so repeated requests always trigger the LaunchedEffect
@@ -154,7 +158,17 @@ fun MainScreen(
         recordingViewModel.events.collect { event ->
             if (event is RecordingEvent.Stopped) {
                 recordingViewModel.consumeStoppedEvent()
-                onNavigateToFinalize(event.routeId)
+                val choice = selectedRefineNow
+                if (choice != null) {
+                    selectedRefineNow = null
+                    routeBeingStopped = null
+                    stoppedRouteAwaitingChoice = null
+                    onNavigateToFinalize(event.routeId)
+                } else if (showRefinementChoice) {
+                    stoppedRouteAwaitingChoice = event.routeId
+                } else {
+                    onNavigateToFinalize(event.routeId)
+                }
             }
         }
     }
@@ -221,6 +235,53 @@ fun MainScreen(
         } else {
             locationError = "Location permission is required for route recording."
         }
+    }
+
+    if (showRefinementChoice) {
+        AlertDialog(
+            onDismissRequest = {
+                showRefinementChoice = false
+                selectedRefineNow = false
+                stoppedRouteAwaitingChoice?.let { routeId ->
+                    selectedRefineNow = null
+                    routeBeingStopped = null
+                    stoppedRouteAwaitingChoice = null
+                    onNavigateToFinalize(routeId)
+                }
+            },
+            title = { Text("Refine route?") },
+            text = {
+                Text(
+                    "Refinement improves road matching and may take several minutes for a long " +
+                        "recording. You can run it now in the background or start it later from the library."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showRefinementChoice = false
+                    selectedRefineNow = true
+                    routeBeingStopped?.let(recordingViewModel::refineRoute)
+                    stoppedRouteAwaitingChoice?.let { routeId ->
+                        selectedRefineNow = null
+                        routeBeingStopped = null
+                        stoppedRouteAwaitingChoice = null
+                        onNavigateToFinalize(routeId)
+                    }
+                }) { Text("Refine now") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showRefinementChoice = false
+                    selectedRefineNow = false
+                    stoppedRouteAwaitingChoice?.let { routeId ->
+                        selectedRefineNow = null
+                        routeBeingStopped = null
+                        stoppedRouteAwaitingChoice = null
+                        onNavigateToFinalize(routeId)
+                    }
+                }) { Text("Later") }
+            },
+        )
     }
 
     recoveryRoute?.let { route ->
@@ -428,7 +489,13 @@ fun MainScreen(
                 recordingState = recordingState,
                 onPauseRecording = { recordingViewModel.pauseRecording() },
                 onResumeRecording = { recordingViewModel.resumeRecording() },
-                onStopRecording = { recordingViewModel.stopRecording() },
+                onStopRecording = {
+                    routeBeingStopped = (recordingState as? RecordingState.Active)?.routeId
+                    showRefinementChoice = true
+                    stoppedRouteAwaitingChoice = null
+                    selectedRefineNow = null
+                    recordingViewModel.stopRecording()
+                },
                 onColorChange = { recordingViewModel.setRecordingColor(it) },
                 onOpenLibrary = onOpenLibrary,
                 onOpenSearch = onOpenSearch,

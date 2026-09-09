@@ -27,6 +27,8 @@ sealed class RecordingState {
         val startedAtMs: Long,
         val totalPausedMs: Long = 0L,
         val pausedSinceMs: Long? = null,
+        /** Set on the Stop tap so elapsed time freezes while final buffered writes complete. */
+        val stoppingAtMs: Long? = null,
         val points: List<RecordingPoint> = emptyList(),
         /** Provisional live "tip" drawn ahead of [points] while the matcher waits to commit. Not persisted. */
         val liveHead: RecordingPoint? = null,
@@ -34,10 +36,12 @@ sealed class RecordingState {
         val color: String = "#FFFF5722",
     ) : RecordingState() {
         val isPaused: Boolean get() = pausedSinceMs != null
+        val isStopping: Boolean get() = stoppingAtMs != null
 
         fun elapsedMs(nowMs: Long): Long {
-            val extra = if (pausedSinceMs != null) nowMs - pausedSinceMs else 0L
-            return (nowMs - startedAtMs - totalPausedMs - extra).coerceAtLeast(0L)
+            val effectiveNow = stoppingAtMs ?: nowMs
+            val extra = if (pausedSinceMs != null) effectiveNow - pausedSinceMs else 0L
+            return (effectiveNow - startedAtMs - totalPausedMs - extra).coerceAtLeast(0L)
         }
     }
 }

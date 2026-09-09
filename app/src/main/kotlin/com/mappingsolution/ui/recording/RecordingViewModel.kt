@@ -8,6 +8,7 @@ import com.mappingsolution.data.recording.RecordingEvent
 import com.mappingsolution.data.recording.RecordingRepository
 import com.mappingsolution.data.recording.RecordingState
 import com.mappingsolution.service.RecordingService
+import com.mappingsolution.service.RouteRefinementWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,6 +48,10 @@ class RecordingViewModel @Inject constructor(
 
     fun stopRecording() {
         getApplication<Application>().startService(RecordingService.stopIntent(getApplication()))
+    }
+
+    fun refineRoute(routeId: String) {
+        RouteRefinementWorker.enqueue(getApplication(), routeId)
     }
 
     fun setRecordingColor(color: String) = recordingRepository.updateLiveColor(color)

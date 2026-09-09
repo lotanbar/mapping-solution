@@ -60,6 +60,7 @@ class RecordingRepository @Inject constructor(
                 name = name,
                 color = DEFAULT_ROUTE_COLOR,
                 didUserTapStop = false,
+                isRefined = false,
                 startedAt = now,
                 checkpointAt = now,
             )
@@ -114,7 +115,7 @@ class RecordingRepository @Inject constructor(
     }
 
     /**
-     * Stop pass: re-matches the whole trip against the OSM road network with a full-trajectory
+     * Refinement pass: re-matches the whole trip against the OSM road network with a full-trajectory
      * HMM/Viterbi [MapMatcher] (Newson & Krumm), then applies a light [TrackSmoother] finishing
      * pass and replaces `points.jsonl` atomically.
      *
@@ -130,9 +131,14 @@ class RecordingRepository @Inject constructor(
      * Returns the authoritative distance (metres) recomputed from the matched geometry, or null
      * if there was nothing to match (caller keeps the provisional live distance).
      */
-    suspend fun mapMatchTrack(routeId: String): Double? {
+    suspend fun mapMatchTrack(
+        routeId: String,
+        onProgress: suspend (phase: String, done: Int, total: Int) -> Unit = { _, _, _ -> },
+    ): Double? {
+        onProgress("Reading recording", 0, 1)
         val smoothed = routeFileRepository.getSmoothedSamples(routeId)
         val committed = routeFileRepository.getPoints(routeId)
+        onProgress("Reading recording", 1, 1)
         // Prefer the clean smoothed track (with full observation features), but only if it actually
         // covers the whole recording. After a force-kill the smoothed write buffer may have lost its
         // tail, in which case the already-persisted committed points span more of the trip and must
@@ -157,18 +163,27 @@ class RecordingRepository @Inject constructor(
         if (observations.size < 2) return null
 
         val coords = observations.map { it.lat to it.lng }
-        runCatching { osmRoadCache.ensureCorridorLoaded(coords) }
+        osmRoadCache.ensureCorridorLoaded(coords) { done, total ->
+            onProgress("Loading road data", done, total)
+        }
         val graph = osmRoadCache.corridorGraph(coords)
 
+        onProgress("Matching route", 0, 1)
         val matched = MapMatcher(graph).match(observations)
+        onProgress("Matching route", 1, 1)
 
         // Light curvature-/gap-aware finishing pass to de-jitter off-road straight runs (on-road
         // matched points are left exactly on the road centreline by the smoother).
         val finishedMatched = if (matched.size >= 3) TrackSmoother.smooth(matched) else matched
         val finished = finishedMatched.map { RoutePoint(ts = it.ts, lat = it.lat, lng = it.lng) }
+        onProgress("Saving refined route", 0, 1)
         routeFileRepository.replacePoints(routeId, finished)
+        onProgress("Saving refined route", 1, 1)
         return computeDistanceMeters(finished)
     }
+
+    suspend fun isReadyForRefinement(routeId: String): Boolean =
+        routeFileRepository.getById(routeId)?.didUserTapStop == true
 
     /** True when the smoothed track spans the committed track's time range within tolerance. */
     private fun smoothedCoversCommitted(smoothed: List<SmoothedSample>, committed: List<RoutePoint>): Boolean {
@@ -195,7 +210,12 @@ class RecordingRepository @Inject constructor(
         return r * 2 * atan2(sqrt(a), sqrt(1 - a))
     }
 
-    suspend fun finalizeStop(routeId: String, distanceMeters: Double, durationSec: Long) {
+    suspend fun finalizeStop(
+        routeId: String,
+        distanceMeters: Double,
+        durationSec: Long,
+        stoppedAtMs: Long,
+    ) {
         val existing = routeFileRepository.getById(routeId) ?: return
         val dateStr = SimpleDateFormat("dd/MM/yyyy-HH:mm", Locale.getDefault()).format(Date(existing.startedAt))
         val fullName = "$dateStr-${formatDuration(durationSec)}-${formatDistance(distanceMeters)}"
@@ -203,13 +223,26 @@ class RecordingRepository @Inject constructor(
             existing.copy(
                 name = fullName,
                 didUserTapStop = true,
-                stoppedAt = System.currentTimeMillis(),
+                isRefined = false,
+                stoppedAt = stoppedAtMs,
                 distanceMeters = distanceMeters,
                 durationSec = durationSec,
             )
         )
         _state.value = RecordingState.Idle
         _events.emit(RecordingEvent.Stopped(routeId))
+    }
+
+    /** Marks a completed route refined without overwriting a name the user may be editing. */
+    suspend fun completeRefinement(routeId: String, matchedDistanceMeters: Double?) {
+        val existing = routeFileRepository.getById(routeId) ?: return
+        val distance = matchedDistanceMeters ?: existing.distanceMeters
+        routeFileRepository.update(
+            existing.copy(
+                distanceMeters = distance,
+                isRefined = true,
+            )
+        )
     }
 
     fun updateLiveColor(color: String) {

@@ -14,7 +14,7 @@ import javax.inject.Singleton
  *                  from, and draw as the solid recorded line. Usually 0 or 1, occasionally more.
  * @param smoothed  The raw Kalman-smoothed sample for this fix (null if the fix was rejected by
  *                  the jump guard). Persisted to `smoothed.jsonl` — including the GPS heading,
- *                  speed and accuracy — so the Stop pass can re-match the whole trip from clean
+ *                  speed and accuracy — so refinement can re-match the whole trip from clean
  *                  input *with the same observation features the live matcher uses*, and to
  *                  survive a force-kill.
  * @param head      The provisional live "tip" to draw ahead of [committed] so the on-screen line
@@ -43,7 +43,7 @@ data class ProcessResult(
  * about road topology or sequence, which structurally produced the square turns, bumps, and
  * intersection jumps that map-matching eliminates.
  *
- * The authoritative final geometry is produced by the full [MapMatcher] pass run on stop over the
+ * The authoritative final geometry is produced by the optional full [MapMatcher] refinement over the
  * persisted `smoothed.jsonl`; live commits here are provisional.
  *
  * Accuracy and min-movement pre-filters are applied upstream in `RecordingService`.
@@ -113,7 +113,7 @@ class SmartTrackProcessor @Inject constructor(private val osmRoadCache: OsmRoadC
         }
         prevSmoothed = smoothLat to smoothLng
         val smoothedPoint = RecordingPoint(ts = nowMs, lat = smoothLat, lng = smoothLng)
-        // Carry the GPS heading/speed/accuracy alongside the smoothed position so the Stop pass
+        // Carry the GPS heading/speed/accuracy alongside the smoothed position so refinement
         // re-matches with the same observation features the live matcher uses (bearing/speed are
         // the strongest cues for which road and which turn at a junction).
         val smoothedSample = SmoothedSample(

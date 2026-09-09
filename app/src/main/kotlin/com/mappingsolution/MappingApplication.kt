@@ -17,6 +17,7 @@ import com.mappingsolution.data.util.StorageManager
 import com.mappingsolution.service.ImportWorker
 import com.mappingsolution.service.MbtilesImportWorker
 import com.mappingsolution.service.RecordingService
+import com.mappingsolution.service.RouteRefinementWorker
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -115,6 +116,13 @@ class MappingApplication : Application(), Configuration.Provider {
                     "Raster Layer Import",
                     NotificationManager.IMPORTANCE_LOW,
                 ).apply { description = "Shows progress while importing MBTiles raster layers" }
+            )
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    RouteRefinementWorker.NOTIF_CHANNEL_ID,
+                    "Route Refinement",
+                    NotificationManager.IMPORTANCE_LOW,
+                ).apply { description = "Shows progress while refining recorded routes" }
             )
         }
     }

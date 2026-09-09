@@ -229,6 +229,7 @@ class RouteFileRepository @Inject constructor(private val storageManager: Storag
             put("isVisible", route.isVisible)
             route.groupId?.let { put("groupId", it) }
             put("didUserTapStop", route.didUserTapStop)
+            put("isRefined", route.isRefined)
             put("startedAt", route.startedAt)
             route.stoppedAt?.let { put("stoppedAt", it) }
             put("checkpointAt", route.checkpointAt)
@@ -250,6 +251,8 @@ class RouteFileRepository @Inject constructor(private val storageManager: Storag
             isVisible = json.optBoolean("isVisible", true),
             groupId = json.optString("groupId").takeIf { it.isNotEmpty() },
             didUserTapStop = json.optBoolean("didUserTapStop", false),
+            // Routes saved before refinement became optional were refined during Stop.
+            isRefined = json.optBoolean("isRefined", true),
             startedAt = json.getLong("startedAt"),
             stoppedAt = if (json.has("stoppedAt")) json.getLong("stoppedAt") else null,
             checkpointAt = json.getLong("checkpointAt"),

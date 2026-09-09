@@ -18,6 +18,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -102,6 +103,31 @@ fun RouteFinalizeScreen(
                     .padding(top = 12.dp, bottom = 88.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
+                if (!isLibraryEdit && !state.isRefined) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            if (state.isRefining) state.refinementProgress.ifEmpty { "Refining route…" }
+                            else "Not refined — you can refine this route later from the library.",
+                            color = if (state.isRefining) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (state.isRefining) {
+                            if (state.refinementProgressFraction > 0f) {
+                                LinearProgressIndicator(
+                                    progress = { state.refinementProgressFraction },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            } else {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                            TextButton(onClick = viewModel::cancelRefinement) { Text("Cancel refinement") }
+                        }
+                    }
+                }
+
                 OutlinedTextField(
                     value = state.name,
                     onValueChange = viewModel::onNameChange,

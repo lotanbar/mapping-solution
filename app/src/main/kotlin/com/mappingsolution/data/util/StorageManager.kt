@@ -169,7 +169,7 @@ class StorageManager @Inject constructor(
     fun getRecordingDir(name: String, id: String): File = File(getRecordingsDir(), recordingFolderName(name, id)).also { it.mkdirs() }
     fun getRecordingFile(name: String, id: String): File = File(getRecordingDir(name, id), "recording.json")
     fun getRecordingPointsFile(name: String, id: String): File = File(getRecordingDir(name, id), "points.jsonl")
-    /** Raw Kalman-smoothed positions (pre map-matching), used as clean input for the Stop pass. */
+    /** Raw Kalman-smoothed positions (pre map-matching), used as clean refinement input. */
     fun getRecordingSmoothedFile(name: String, id: String): File = File(getRecordingDir(name, id), "smoothed.jsonl")
     fun deleteRecordingFolder(name: String, id: String): Boolean =
         File(getRecordingsDir(), recordingFolderName(name, id)).deleteRecursively()

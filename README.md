@@ -8,7 +8,7 @@ An Android app for recording GPS data and monitoring trips. Built with modern Ko
 
 - **Map** — MapTiler satellite hybrid, takes 80% of the screen. Shows POIs and routes toggled from the library.
 - **POIs** — Add at current location, assign to a group (inherits group icon + color), and attach photos/audio.
-- **Route recording** — Foreground service with live polyline, pause/resume/stop. Kalman-filtered GPS refined by on-device HMM/Viterbi map-matching (live windowed matcher + full re-match on stop). Auto-saves on force-kill as an *incomplete* recording.
+- **Route recording** — Foreground service with live polyline, pause/resume/stop. Kalman-filtered GPS uses live windowed map-matching; optional full-route refinement runs in the background now or later from the library. Auto-saves on force-kill as an *incomplete* recording.
 - **Library** — Browse/search groups, POIs, and routes. Toggle visibility, multi-select, delete, orphan, re-group.
 - **Import** — GPX files only (see below).
 
@@ -52,6 +52,7 @@ An Android app for recording GPS data and monitoring trips. Built with modern Ko
 | color | String | hex, e.g. `#FFFF5722` — routes do not belong to groups |
 | isVisible | Boolean | |
 | didUserTapStop | Boolean | `false` = incomplete/force-killed recording |
+| isRefined | Boolean | full-route refinement completed |
 | startedAt | Long | epoch ms |
 | stoppedAt | Long? | epoch ms |
 | checkpointAt | Long | epoch ms |

@@ -10,6 +10,8 @@ data class Route(
     val isVisible: Boolean = true,
     val groupId: String? = null,
     val didUserTapStop: Boolean = false,
+    /** Existing/imported routes default to refined; new recordings explicitly start unrefined. */
+    val isRefined: Boolean = true,
     val startedAt: Long,
     val stoppedAt: Long? = null,
     val checkpointAt: Long,

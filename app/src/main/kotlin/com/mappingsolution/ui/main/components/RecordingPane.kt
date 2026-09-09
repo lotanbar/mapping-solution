@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -86,7 +87,13 @@ fun RecordingPane(
             fontWeight = FontWeight.Bold,
             color = Color.White,
         )
-        if (state.isPaused) {
+        if (state.isStopping) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(32.dp),
+                strokeWidth = 3.dp,
+                color = Color.White,
+            )
+        } else if (state.isPaused) {
             IconButton(onClick = onResume, modifier = Modifier.size(56.dp)) {
                 Icon(
                     imageVector = Icons.Default.PlayArrow,
@@ -105,13 +112,15 @@ fun RecordingPane(
                 )
             }
         }
-        IconButton(onClick = onStop, modifier = Modifier.size(56.dp)) {
-            Icon(
-                imageVector = Icons.Default.Stop,
-                contentDescription = "Stop recording",
-                tint = Color.Red,
-                modifier = Modifier.size(32.dp),
-            )
+        if (!state.isStopping) {
+            IconButton(onClick = onStop, modifier = Modifier.size(56.dp)) {
+                Icon(
+                    imageVector = Icons.Default.Stop,
+                    contentDescription = "Stop recording",
+                    tint = Color.Red,
+                    modifier = Modifier.size(32.dp),
+                )
+            }
         }
         // Color swatch — tap to change the live route color
         val trackColor = parseHex(state.color)

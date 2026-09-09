@@ -19,6 +19,7 @@ import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -199,31 +200,40 @@ class OsmRoadCache @Inject constructor(private val httpClient: OkHttpClient) {
 
     /**
      * Suspends until every tile the [points] pass through is loaded (re-fetching tiles that were
-     * evicted or expired during a long recording). Used by the Stop pass so the full re-match has
+     * evicted or expired during a long recording). Used by refinement so the full re-match has
      * complete road coverage for the entire trip.
      */
-    suspend fun ensureCorridorLoaded(points: List<Pair<Double, Double>>) {
+    suspend fun ensureCorridorLoaded(
+        points: List<Pair<Double, Double>>,
+        onProgress: suspend (done: Int, total: Int) -> Unit = { _, _ -> },
+    ) {
         val tiles = LinkedHashSet<Pair<Int, Int>>()
         for ((lat, lon) in points) tiles.add(tileIndices(lat, lon))
-        for ((latIdx, lonIdx) in tiles) {
+        onProgress(0, tiles.size)
+        for ((index, tile) in tiles.withIndex()) {
+            val (latIdx, lonIdx) = tile
             val key = tileKey(latIdx, lonIdx)
             val cached = cache[key]
-            if (cached != null && System.currentTimeMillis() - cached.fetchedAt < TILE_TTL_MS) continue
-            fetchMutex.withLock {
-                val recheck = cache[key]
-                if (recheck != null && System.currentTimeMillis() - recheck.fetchedAt < TILE_TTL_MS) return@withLock
-                val south = latIdx * TILE_DEG - MARGIN_DEG
-                val north = (latIdx + 1) * TILE_DEG + MARGIN_DEG
-                val west  = lonIdx  * TILE_DEG - MARGIN_DEG
-                val east  = (lonIdx  + 1) * TILE_DEG + MARGIN_DEG
-                fetchTile(key, south, west, north, east)
+            if (cached == null || System.currentTimeMillis() - cached.fetchedAt >= TILE_TTL_MS) {
+                val loaded = fetchMutex.withLock {
+                    val recheck = cache[key]
+                    if (recheck == null || System.currentTimeMillis() - recheck.fetchedAt >= TILE_TTL_MS) {
+                        val south = latIdx * TILE_DEG - MARGIN_DEG
+                        val north = (latIdx + 1) * TILE_DEG + MARGIN_DEG
+                        val west  = lonIdx  * TILE_DEG - MARGIN_DEG
+                        val east  = (lonIdx  + 1) * TILE_DEG + MARGIN_DEG
+                        fetchTile(key, south, west, north, east)
+                    } else true
+                }
+                if (!loaded) throw IOException("Could not load road data for route")
             }
+            onProgress(index + 1, tiles.size)
         }
     }
 
     /**
      * Builds a routable [RoadGraph] from every cached tile the [points] pass through, deduplicated
-     * by OSM way ID. Call [ensureCorridorLoaded] first to guarantee coverage. Used by the Stop pass.
+     * by OSM way ID. Call [ensureCorridorLoaded] first to guarantee coverage during refinement.
      */
     fun corridorGraph(points: List<Pair<Double, Double>>): RoadGraph {
         val tiles = LinkedHashSet<Pair<Int, Int>>()
@@ -244,7 +254,7 @@ class OsmRoadCache @Inject constructor(private val httpClient: OkHttpClient) {
     private suspend fun fetchTile(
         key: String,
         south: Double, west: Double, north: Double, east: Double,
-    ) {
+    ): Boolean {
         val query = """
             [out:json][timeout:15][bbox:$south,$west,$north,$east];
             (way[highway~"^(${HIGHWAY_TYPES.joinToString("|")})${'$'}"];);
@@ -283,10 +293,11 @@ class OsmRoadCache @Inject constructor(private val httpClient: OkHttpClient) {
             evictIfNeeded()
             cache[key] = CachedTile(ways, System.currentTimeMillis())
             rebuildRoadsFlow()
-            return
+            return true
         }
 
         Log.e(TAG, "All Overpass endpoints failed for tile $key")
+        return false
     }
 
     private fun parseWays(json: JSONObject): List<OsmRoadWay> {

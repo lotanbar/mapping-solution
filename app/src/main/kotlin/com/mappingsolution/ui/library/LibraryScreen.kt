@@ -150,6 +150,8 @@ fun LibraryScreen(
     val osmPoiGroup by viewModel.osmPoiGroup.collectAsState()
     val mapStyle by viewModel.mapStyle.collectAsState()
     val hillshadeVisible by viewModel.hillshadeVisible.collectAsState()
+    val refiningRouteIds by viewModel.refiningRouteIds.collectAsState()
+    val refinementProgress by viewModel.refinementProgress.collectAsState()
 
     val context = LocalContext.current
 
@@ -924,6 +926,10 @@ fun LibraryScreen(
                                 },
                                 onToggleVisibility = { viewModel.toggleRouteVisibility(route) },
                                 onIncompleteIconTap = { incompleteRoute = route },
+                                isRefining = route.id in refiningRouteIds,
+                                refinementProgress = refinementProgress[route.id],
+                                onRefine = { viewModel.refineRoute(route.id) },
+                                onCancelRefinement = { viewModel.cancelRouteRefinement(route.id) },
                             )
                             HorizontalDivider(modifier = Modifier.padding(start = 24.dp, end = 16.dp))
                         }
@@ -949,6 +955,10 @@ fun LibraryScreen(
                         },
                         onToggleVisibility = { viewModel.toggleRouteVisibility(route) },
                         onIncompleteIconTap = { incompleteRoute = route },
+                        isRefining = route.id in refiningRouteIds,
+                        refinementProgress = refinementProgress[route.id],
+                        onRefine = { viewModel.refineRoute(route.id) },
+                        onCancelRefinement = { viewModel.cancelRouteRefinement(route.id) },
                     )
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                 }
@@ -1280,6 +1290,10 @@ private fun RouteRow(
     onLongPress: () -> Unit,
     onToggleVisibility: () -> Unit,
     onIncompleteIconTap: () -> Unit,
+    isRefining: Boolean,
+    refinementProgress: String?,
+    onRefine: () -> Unit,
+    onCancelRefinement: () -> Unit,
 ) {
     val routeColor = parseHexColor(route.color)
     val isIncomplete = !route.didUserTapStop
@@ -1292,9 +1306,23 @@ private fun RouteRow(
         colors = ListItemDefaults.colors(containerColor = containerColor),
         modifier = Modifier.combinedClickable(onClick = onTap, onLongClick = onLongPress),
         headlineContent = { Text(route.name) },
-        supportingContent = route.description?.let {
-            { Text(it, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        },
+        supportingContent = if (route.description != null || (!isIncomplete && !route.isRefined)) {
+            {
+                Column {
+                    route.description?.let {
+                        Text(it, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (!isIncomplete && !route.isRefined) {
+                        Text(
+                            refinementProgress ?: "Not refined",
+                            maxLines = 1,
+                            color = if (isRefining) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.tertiary,
+                        )
+                    }
+                }
+            }
+        } else null,
         leadingContent = {
             if (isSelected) {
                 Box(
@@ -1325,6 +1353,16 @@ private fun RouteRow(
                             contentDescription = "Incomplete recording",
                             tint = MaterialTheme.colorScheme.error,
                         )
+                    }
+                } else if (!route.isRefined) {
+                    if (isRefining) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                        )
+                        TextButton(onClick = onCancelRefinement) { Text("Cancel") }
+                    } else {
+                        TextButton(onClick = onRefine) { Text("Refine") }
                     }
                 }
                 IconButton(onClick = onToggleVisibility) {
