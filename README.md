@@ -14,15 +14,16 @@ An Android app for recording GPS data and monitoring trips. Built with modern Ko
 
 ### Optional image source setup
 
-To enable Mapillary images for OSM POIs, create a Mapillary client access token and add it to the
-untracked `local.properties` file:
+To enable Mapillary images explicitly linked by an OSM POI, create a Mapillary client access token
+and add it to the untracked `local.properties` file:
 
 ```properties
 MAPILLARY_ACCESS_TOKEN=MLY|your-client-token
 ```
 
-Without a token, the existing Wikimedia, Openverse, Panoramax, KartaView, and linked Flickr image
-sources continue to work normally.
+The image resolver also uses exact OSM photo links, coordinate-verified Wikimedia/Wikipedia/Wikidata
+matches, Panoramax/KartaView/Flickr links, and preview images from OSM-linked official websites.
+Nearby street photos and ambiguous name-only matches are deliberately excluded.
 
 ---
 

@@ -13,9 +13,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
@@ -25,6 +25,20 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
+data class WikimediaImage(
+    val imageUrl: String,
+    val imageSourceUrl: String? = null,
+    val imageAuthor: String? = null,
+    val imageLicense: String? = null,
+    val imageLicenseUrl: String? = null,
+) {
+    val imageCredit: String?
+        get() = listOfNotNull(
+            imageAuthor?.takeIf { it.isNotBlank() },
+            imageLicense?.takeIf { it.isNotBlank() },
+        ).joinToString(" · ").ifBlank { null }
+}
+
 data class WikimediaContent(
     val imageUrl: String? = null,
     val description: String? = null,
@@ -33,6 +47,7 @@ data class WikimediaContent(
     val imageAuthor: String? = null,
     val imageLicense: String? = null,
     val imageLicenseUrl: String? = null,
+    val additionalImages: List<WikimediaImage> = emptyList(),
 ) {
     val hasContent: Boolean get() = imageUrl != null || description != null
 
@@ -41,6 +56,14 @@ data class WikimediaContent(
             imageAuthor?.takeIf { it.isNotBlank() },
             imageLicense?.takeIf { it.isNotBlank() },
         ).joinToString(" · ").ifBlank { null }
+
+    val images: List<WikimediaImage>
+        get() = buildList {
+            imageUrl?.let {
+                add(WikimediaImage(it, imageSourceUrl, imageAuthor, imageLicense, imageLicenseUrl))
+            }
+            addAll(additionalImages.filterNot { candidate -> candidate.imageUrl == imageUrl })
+        }.distinctBy(WikimediaImage::imageUrl)
 }
 
 /**
@@ -60,7 +83,8 @@ class WikimediaRepository @Inject constructor(
 
     suspend fun getContent(poi: Poi): WikimediaContent? = withContext(Dispatchers.IO) {
         val searchNames = poiSearchNames(poi)
-        val cacheKey = "v$CACHE_VERSION|${poi.id}|${poi.wikiRef.orEmpty()}|" +
+        val cacheKey = "v$CACHE_VERSION|mapillary=${BuildConfig.MAPILLARY_ACCESS_TOKEN.isNotBlank()}|" +
+            "${poi.id}|${poi.wikiRef.orEmpty()}|" +
             poi.imageRefs.joinToString(";") + "|" + searchNames.joinToString(";") +
             "|${"%.5f".format(poi.lat)},${"%.5f".format(poi.lng)}"
         loadMemoryCache(cacheKey)?.let {
@@ -82,7 +106,7 @@ class WikimediaRepository @Inject constructor(
 
             val attempt = ResolutionAttempt()
             val resolved = try {
-                val exactImage = attempt.firstProvider(poi.imageRefs.map { ref ->
+                val exactImages = attempt.allProviders(poi.imageRefs.map { ref ->
                     suspend { resolveExactImageRef(ref, poi.name) }
                 })
                 val linked = attempt.provider {
@@ -98,30 +122,16 @@ class WikimediaRepository @Inject constructor(
                     wikipedia.withFallbackContent(wikidata)
                 } else null
                 val base = linked.withFallbackContent(discovered.withoutImage())
-                val semanticImage = exactImage
-                    ?: linked?.takeIf { it.imageUrl != null }
-                    ?: discovered?.takeIf { it.imageUrl != null }
-                    ?: attempt.firstProvider(
-                        listOf(
-                            { resolveNearbyImage(poi, searchNames) },
-                            { resolveNamedImage(searchNames) },
-                            { resolveOpenverseImage(searchNames) },
-                        ),
-                    )
-                val withSemanticImage = if (exactImage != null) {
-                    base.withPreferredImage(exactImage)
-                } else {
-                    base.withFallbackImage(semanticImage)
-                }
-                if (withSemanticImage?.imageUrl != null) withSemanticImage
-                else withSemanticImage.withFallbackImage(
-                    attempt.firstProvider(
-                        listOf(
-                            { resolveMapillaryImage(poi) },
-                            { resolvePanoramaxImage(poi) },
-                            { resolveKartaViewImage(poi) },
-                        ),
+                val discoveredImages = attempt.allProviders(
+                    listOf(
+                        { resolveNearbyImage(poi, searchNames) },
                     ),
+                )
+                base.withImages(
+                    exactImages + listOfNotNull(
+                        linked?.takeIf { it.imageUrl != null },
+                        discovered?.takeIf { it.imageUrl != null },
+                    ) + discoveredImages,
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -156,16 +166,14 @@ class WikimediaRepository @Inject constructor(
             null
         }
 
-        suspend fun firstProvider(
+        suspend fun allProviders(
             providers: List<suspend () -> WikimediaContent?>,
-        ): WikimediaContent? {
-            for (candidate in providers) provider(candidate)?.let { return it }
-            return null
-        }
+        ): List<WikimediaContent> = providers.mapNotNull { provider(it) }
     }
 
     private suspend fun resolveExactImageRef(ref: String, poiName: String): WikimediaContent? {
         return when {
+            ref.startsWith("website:") -> resolveOfficialWebsiteImage(ref.substringAfter(':'))
             ref.startsWith("panoramax:") -> resolvePanoramaxId(ref.substringAfter(':'))
             ref.startsWith("kartaview:") -> resolveKartaViewId(ref.substringAfter(':'))
             ref.startsWith("mapillary:") -> resolveMapillaryId(ref.substringAfter(':'))
@@ -180,8 +188,68 @@ class WikimediaRepository @Inject constructor(
                 val fileRef = commonsFileRef(ref)
                 if (fileRef != null) resolveCommonsFile(fileRef) else null
             }
-            else -> null
+            else -> resolveDirectImageUrl(ref)
         }
+    }
+
+    /** An OSM image/photo tag points at this URL explicitly, so no proximity guess is involved. */
+    private fun resolveDirectImageUrl(rawUrl: String): WikimediaContent? {
+        val url = externalHttpUrl(rawUrl) ?: return null
+        return WikimediaContent(imageUrl = url, imageSourceUrl = url)
+    }
+
+    /** Uses the preview image declared by an OSM-linked official website. */
+    private suspend fun resolveOfficialWebsiteImage(rawUrl: String): WikimediaContent? {
+        val website = externalHttpUrl(rawUrl) ?: return null
+        val request = Request.Builder()
+            .url(website)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "text/html,application/xhtml+xml")
+            .get()
+            .build()
+        return httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw IOException("Official website HTTP ${response.code}")
+            val contentType = response.header("Content-Type").orEmpty().lowercase()
+            if (contentType.isNotBlank() && "html" !in contentType) return@use null
+            val source = response.body?.source() ?: return@use null
+            source.request(WEBSITE_HTML_LIMIT_BYTES)
+            val html = source.readUtf8(minOf(source.buffer.size, WEBSITE_HTML_LIMIT_BYTES))
+            val imageRef = websitePreviewImage(html) ?: return@use null
+            val imageUrl = response.request.url.resolve(Html.fromHtml(
+                imageRef,
+                Html.FROM_HTML_MODE_LEGACY,
+            ).toString())?.toString() ?: return@use null
+            WikimediaContent(
+                imageUrl = imageUrl,
+                imageSourceUrl = response.request.url.toString(),
+                imageAuthor = response.request.url.host,
+            )
+        }
+    }
+
+    private fun websitePreviewImage(html: String): String? {
+        val metaTags = META_TAG.findAll(html)
+        for (tagMatch in metaTags) {
+            val attributes = HTML_ATTRIBUTE.findAll(tagMatch.value).associate { match ->
+                match.groupValues[1].lowercase() to match.groupValues[3]
+            }
+            val property = (attributes["property"] ?: attributes["name"])?.lowercase()
+            if (property in WEBSITE_IMAGE_PROPERTIES) {
+                attributes["content"]?.takeIf(String::isNotBlank)?.let { return it }
+            }
+        }
+        return IMAGE_SRC_LINK.find(html)?.groupValues?.getOrNull(3)?.takeIf(String::isNotBlank)
+    }
+
+    private fun externalHttpUrl(rawUrl: String): String? {
+        val trimmed = rawUrl.trim()
+        val candidate = when {
+            trimmed.startsWith("https://", ignoreCase = true) -> trimmed
+            trimmed.startsWith("http://", ignoreCase = true) -> trimmed
+            trimmed.startsWith("www.", ignoreCase = true) -> "https://$trimmed"
+            else -> return null
+        }
+        return runCatching { candidate.toHttpUrl().toString() }.getOrNull()
     }
 
     private fun commonsFileRef(value: String): String? {
@@ -228,7 +296,7 @@ class WikimediaRepository @Inject constructor(
         val url = "https://graph.mapillary.com/$id".toHttpUrl().newBuilder()
             .addQueryParameter("fields", "id,thumb_1024_url,creator")
             .build()
-        return mapillaryContent(requestMapillaryJson(url.toString(), token))
+        return mapillaryImage(requestMapillaryJson(url.toString(), token))?.asContent()
     }
 
     private suspend fun resolveFlickrUrl(rawUrl: String): WikimediaContent? {
@@ -322,6 +390,7 @@ class WikimediaRepository @Inject constructor(
             imageAuthor = image?.imageAuthor,
             imageLicense = image?.imageLicense,
             imageLicenseUrl = image?.imageLicenseUrl,
+            additionalImages = image?.additionalImages.orEmpty(),
         )
     }
 
@@ -567,6 +636,7 @@ class WikimediaRepository @Inject constructor(
             imageAuthor = image?.imageAuthor,
             imageLicense = image?.imageLicense,
             imageLicenseUrl = image?.imageLicenseUrl,
+            additionalImages = image?.additionalImages.orEmpty(),
         )
     }
 
@@ -701,7 +771,7 @@ class WikimediaRepository @Inject constructor(
         names: List<String>,
     ): WikimediaContent? {
         val pages = json.optJSONObject("query")?.optJSONArray("pages") ?: return null
-        return (0 until pages.length()).mapNotNull { index ->
+        val candidates = (0 until pages.length()).mapNotNull { index ->
             val page = pages.optJSONObject(index) ?: return@mapNotNull null
             val coordinates = page.optJSONArray("coordinates")?.optJSONObject(0)
                 ?: return@mapNotNull null
@@ -713,17 +783,15 @@ class WikimediaRepository @Inject constructor(
             val titleScore = names.maxOfOrNull {
                 imageTitleScore(page.optString("title"), it)
             } ?: 0
-            val hasStrongTitle = titleScore >= STRONG_IMAGE_TITLE_SCORE
-            if (!hasStrongTitle && distance > COMMONS_UNNAMED_IMAGE_DISTANCE_METERS) {
-                return@mapNotNull null
-            }
+            if (titleScore < STRONG_IMAGE_TITLE_SCORE) return@mapNotNull null
             val content = imageContent(page) ?: return@mapNotNull null
             NearbyImageCandidate(titleScore, distance, page.optInt("index", index), content)
         }.sortedWith(
             compareByDescending<NearbyImageCandidate> { it.titleScore }
                 .thenBy { it.distance }
                 .thenBy { it.index },
-        ).firstOrNull()?.content
+        ).map(NearbyImageCandidate::content)
+        return candidates.firstOrNull()?.withImages(candidates)
     }
 
     private data class NearbyImageCandidate(
@@ -733,116 +801,11 @@ class WikimediaRepository @Inject constructor(
         val content: WikimediaContent,
     )
 
-    private suspend fun resolveNamedImage(names: List<String>): WikimediaContent? {
-        for (name in names.take(MAX_SEARCH_NAMES)) {
-            if (significantTokens(name).isEmpty()) continue
-            val url = commonsImageQuery().newBuilder()
-                .addQueryParameter("generator", "search")
-                .addQueryParameter("gsrsearch", "\"$name\"")
-                .addQueryParameter("gsrnamespace", "6")
-                .addQueryParameter("gsrlimit", "12")
-                .build()
-            bestImage(requestJson(url.toString()), names, requireRelevantTitle = true)
-                ?.let { return it }
-        }
-        return null
-    }
-
-    /** Searches non-Wikimedia open collections (primarily Flickr and museum archives). */
-    private suspend fun resolveOpenverseImage(names: List<String>): WikimediaContent? {
-        for (name in names.take(MAX_SEARCH_NAMES)) {
-            val tokens = significantTokens(name)
-            if (tokens.isEmpty()) continue
-            val url = "https://api.openverse.org/v1/images/".toHttpUrl().newBuilder()
-                .addQueryParameter("q", "\"$name\"")
-                .addQueryParameter("page_size", "12")
-                .addQueryParameter("mature", "false")
-                .addQueryParameter("excluded_source", "wikimedia")
-                .build()
-            val results = requestJson(url.toString()).optJSONArray("results") ?: continue
-            val minimumMatches = if (tokens.size == 1) 1 else (tokens.size * 2 + 2) / 3
-            val match = (0 until results.length()).mapNotNull { index ->
-                val item = results.optJSONObject(index) ?: return@mapNotNull null
-                val title = item.optString("title")
-                val normalizedTitle = normalize(title)
-                val matches = tokens.count(normalizedTitle::contains)
-                if (matches < minimumMatches || imageTitleScore(title, name) == Int.MIN_VALUE) {
-                    return@mapNotNull null
-                }
-                val imageUrl = item.optString("url").ifBlank {
-                    item.optString("thumbnail")
-                }.ifBlank { return@mapNotNull null }
-                val license = listOfNotNull(
-                    item.optString("license").ifBlank { null }?.uppercase(),
-                    item.optString("license_version").ifBlank { null },
-                ).joinToString(" ").ifBlank { null }
-                matches to WikimediaContent(
-                    imageUrl = imageUrl,
-                    imageSourceUrl = item.optString("foreign_landing_url").ifBlank { null },
-                    imageAuthor = item.optString("creator").ifBlank { null },
-                    imageLicense = license,
-                    imageLicenseUrl = item.optString("license_url").ifBlank { null },
-                )
-            }.maxByOrNull { it.first }?.second
-            if (match != null) return match
-        }
-        return null
-    }
-
-    /** Open, geotagged street imagery. Only accepts a planar photo facing the POI. */
-    private suspend fun resolveMapillaryImage(poi: Poi): WikimediaContent? {
-        val token = BuildConfig.MAPILLARY_ACCESS_TOKEN.trim()
-        if (token.isBlank()) return null
-        val latDelta = STREET_IMAGE_RADIUS_METERS / 111_320.0
-        val lonDelta = latDelta / kotlin.math.cos(Math.toRadians(poi.lat)).coerceAtLeast(0.1)
-        val bbox = listOf(
-            poi.lng - lonDelta,
-            poi.lat - latDelta,
-            poi.lng + lonDelta,
-            poi.lat + latDelta,
-        ).joinToString(",")
-        val url = "https://graph.mapillary.com/images".toHttpUrl().newBuilder()
-            .addQueryParameter(
-                "fields",
-                "id,thumb_1024_url,creator,computed_geometry,geometry,compass_angle,camera_type",
-            )
-            .addQueryParameter("bbox", bbox)
-            .addQueryParameter("limit", "30")
-            .build()
-        val items = requestMapillaryJson(url.toString(), token).optJSONArray("data") ?: return null
-        return (0 until items.length()).mapNotNull { index ->
-            val item = items.optJSONObject(index) ?: return@mapNotNull null
-            if (item.optString("camera_type").lowercase() in MAPILLARY_PANORAMA_TYPES) {
-                return@mapNotNull null
-            }
-            val geometry = item.optJSONObject("computed_geometry")
-                ?: item.optJSONObject("geometry")
-                ?: return@mapNotNull null
-            val coordinates = geometry.optJSONArray("coordinates") ?: return@mapNotNull null
-            val photoLng = coordinates.optDouble(0, Double.NaN)
-            val photoLat = coordinates.optDouble(1, Double.NaN)
-            if (!photoLat.isFinite() || !photoLng.isFinite()) return@mapNotNull null
-            val distance = distanceMeters(poi.lat, poi.lng, photoLat, photoLng)
-            if (distance > STREET_IMAGE_RADIUS_METERS) return@mapNotNull null
-            val heading = item.optDouble("compass_angle", Double.NaN)
-            if (!facesPoi(
-                    photoLat,
-                    photoLng,
-                    heading,
-                    MAPILLARY_HALF_FOV_DEGREES,
-                    poi,
-                    distance,
-                )
-            ) return@mapNotNull null
-            distance to (mapillaryContent(item) ?: return@mapNotNull null)
-        }.minByOrNull { it.first }?.second
-    }
-
-    private fun mapillaryContent(item: JSONObject): WikimediaContent? {
+    private fun mapillaryImage(item: JSONObject): WikimediaImage? {
         val id = item.optString("id").ifBlank { return null }
         val imageUrl = item.optString("thumb_1024_url").ifBlank { return null }
         val creator = item.optJSONObject("creator")
-        return WikimediaContent(
+        return WikimediaImage(
             imageUrl = imageUrl,
             imageSourceUrl = "https://www.mapillary.com/app/?pKey=$id&focus=photo",
             imageAuthor = creator?.optString("username")?.ifBlank { null }
@@ -852,59 +815,21 @@ class WikimediaRepository @Inject constructor(
         )
     }
 
+    private fun WikimediaImage.asContent(
+        additionalImages: List<WikimediaImage> = emptyList(),
+    ): WikimediaContent = WikimediaContent(
+        imageUrl = imageUrl,
+        imageSourceUrl = imageSourceUrl,
+        imageAuthor = imageAuthor,
+        imageLicense = imageLicense,
+        imageLicenseUrl = imageLicenseUrl,
+        additionalImages = additionalImages,
+    )
+
     private fun mapillaryImageId(rawValue: String): String? {
         val value = rawValue.trim()
         if (value.matches(MAPILLARY_BARE_ID)) return value
         return MAPILLARY_URL_ID.find(value)?.groupValues?.getOrNull(1)
-    }
-
-    /** Open, geotagged street imagery. Only accepts a planar photo facing the POI. */
-    private suspend fun resolvePanoramaxImage(poi: Poi): WikimediaContent? {
-        val latDelta = STREET_IMAGE_RADIUS_METERS / 111_320.0
-        val lonDelta = latDelta / kotlin.math.cos(Math.toRadians(poi.lat)).coerceAtLeast(0.1)
-        val bbox = listOf(
-            poi.lng - lonDelta,
-            poi.lat - latDelta,
-            poi.lng + lonDelta,
-            poi.lat + latDelta,
-        ).joinToString(",")
-        val url = "https://api.panoramax.xyz/api/search".toHttpUrl().newBuilder()
-            .addQueryParameter("bbox", bbox)
-            .addQueryParameter("limit", "30")
-            .build()
-        val features = requestJson(url.toString()).optJSONArray("features") ?: return null
-        return (0 until features.length()).mapNotNull { index ->
-            val feature = features.optJSONObject(index) ?: return@mapNotNull null
-            val coordinates = feature.optJSONObject("geometry")
-                ?.optJSONArray("coordinates") ?: return@mapNotNull null
-            val photoLng = coordinates.optDouble(0)
-            val photoLat = coordinates.optDouble(1)
-            val distance = distanceMeters(poi.lat, poi.lng, photoLat, photoLng)
-            if (distance > STREET_IMAGE_RADIUS_METERS) return@mapNotNull null
-            val properties = feature.optJSONObject("properties") ?: return@mapNotNull null
-            val orientation = properties.optJSONObject("pers:interior_orientation")
-            val fieldOfView = orientation?.optDouble("field_of_view", Double.NaN)
-                ?.takeIf(Double::isFinite)
-                ?: estimatedFieldOfView(orientation)
-            // Equirectangular panoramas need an interactive viewer; a static crop is misleading.
-            if (!fieldOfView.isFinite() || fieldOfView <= 0 || fieldOfView >= 180) return@mapNotNull null
-            val heading = properties.optDouble("view:azimuth", Double.NaN)
-            if (!facesPoi(photoLat, photoLng, heading, fieldOfView / 2 + 10, poi, distance)) {
-                return@mapNotNull null
-            }
-            distance to (panoramaFeatureContent(feature) ?: return@mapNotNull null)
-        }.minByOrNull { it.first }?.second
-    }
-
-    /** Older Panoramax photos may expose focal length and sensor pixels but omit field_of_view. */
-    private fun estimatedFieldOfView(orientation: JSONObject?): Double {
-        orientation ?: return Double.NaN
-        val focalLength = orientation.optDouble("focal_length", Double.NaN)
-        val sensorPixels = orientation.optJSONArray("sensor_array_dimensions")?.optDouble(0)
-            ?: Double.NaN
-        if (!focalLength.isFinite() || focalLength <= 0 || !sensorPixels.isFinite()) return Double.NaN
-        // Phone main cameras with 4–7 mm focal lengths are typically 65–80° horizontally.
-        return if (focalLength in 3.0..9.0 && sensorPixels >= 1_000) 72.0 else Double.NaN
     }
 
     private fun panoramaFeatureContent(feature: JSONObject?): WikimediaContent? {
@@ -939,48 +864,6 @@ class WikimediaRepository @Inject constructor(
         )
     }
 
-    /** KartaView fallback with the same strict proximity and camera-heading checks. */
-    private suspend fun resolveKartaViewImage(poi: Poi): WikimediaContent? {
-        val form = FormBody.Builder()
-            .add("lat", poi.lat.toString())
-            .add("lng", poi.lng.toString())
-            .add("radius", STREET_IMAGE_RADIUS_METERS.toInt().toString())
-            .add("page", "1")
-            .add("ipp", "30")
-            .build()
-        val items = requestJsonPost(
-            "https://api.openstreetcam.org/1.0/list/nearby-photos/",
-            form,
-        ).optJSONArray("currentPageItems") ?: return null
-        return (0 until items.length()).mapNotNull { index ->
-            val item = items.optJSONObject(index) ?: return@mapNotNull null
-            if (item.optString("projection").equals("SPHERE", ignoreCase = true)) {
-                return@mapNotNull null
-            }
-            val photoLat = item.optDouble("lat", Double.NaN)
-            val photoLng = item.optDouble("lng", Double.NaN)
-            if (!photoLat.isFinite() || !photoLng.isFinite()) return@mapNotNull null
-            val distance = distanceMeters(poi.lat, poi.lng, photoLat, photoLng)
-            if (distance > STREET_IMAGE_RADIUS_METERS) return@mapNotNull null
-            val heading = item.optDouble("heading", Double.NaN)
-            if (!facesPoi(photoLat, photoLng, heading, KARTAVIEW_HALF_FOV_DEGREES, poi, distance)) {
-                return@mapNotNull null
-            }
-            val path = item.optString("name")
-            val storage = path.substringBefore('/').takeIf { it.matches(Regex("storage\\d+")) }
-                ?: return@mapNotNull null
-            val imageUrl = "https://$storage.openstreetcam.org/${path.substringAfter('/')}"
-            val id = item.optString("id")
-            distance to WikimediaContent(
-                imageUrl = imageUrl,
-                imageSourceUrl = "https://kartaview.org/details/$id/track-info",
-                imageAuthor = item.optString("username").ifBlank { "KartaView contributor" },
-                imageLicense = "CC BY-SA 4.0",
-                imageLicenseUrl = "https://creativecommons.org/licenses/by-sa/4.0/",
-            )
-        }.minByOrNull { it.first }?.second
-    }
-
     private fun commonsImageQuery() =
         "https://commons.wikimedia.org/w/api.php".toHttpUrl().newBuilder()
             .addQueryParameter("action", "query")
@@ -1010,10 +893,11 @@ class WikimediaRepository @Inject constructor(
             val score = poiNames.maxOfOrNull { imageTitleScore(page.optString("title"), it) } ?: 0
             Triple(score, page.optInt("index", index), content)
         }.filter { (score, _, _) -> !requireRelevantTitle || score > 0 }
-        return candidates.sortedWith(
+        val sorted = candidates.sortedWith(
             compareByDescending<Triple<Int, Int, WikimediaContent>> { it.first }
                 .thenBy { it.second },
-        ).firstOrNull()?.third
+        ).map { it.third }
+        return sorted.firstOrNull()?.withImages(sorted)
     }
 
     private fun imageTitleScore(title: String, poiName: String): Int {
@@ -1066,27 +950,6 @@ class WikimediaRepository @Inject constructor(
         return earthRadius * 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
     }
 
-    private fun facesPoi(
-        photoLat: Double,
-        photoLng: Double,
-        heading: Double,
-        halfFieldOfView: Double,
-        poi: Poi,
-        distance: Double,
-    ): Boolean {
-        if (distance <= STREET_IMAGE_NO_HEADING_DISTANCE_METERS) return true
-        if (!heading.isFinite()) return false
-        val lat1 = Math.toRadians(photoLat)
-        val lat2 = Math.toRadians(poi.lat)
-        val dLon = Math.toRadians(poi.lng - photoLng)
-        val y = kotlin.math.sin(dLon) * kotlin.math.cos(lat2)
-        val x = kotlin.math.cos(lat1) * kotlin.math.sin(lat2) -
-            kotlin.math.sin(lat1) * kotlin.math.cos(lat2) * kotlin.math.cos(dLon)
-        val bearing = (Math.toDegrees(kotlin.math.atan2(y, x)) + 360) % 360
-        val difference = kotlin.math.abs((heading - bearing + 540) % 360 - 180)
-        return difference <= halfFieldOfView
-    }
-
     private fun normalize(value: String): String = Normalizer.normalize(value, Normalizer.Form.NFD)
         .replace(Regex("\\p{M}+"), "")
         .lowercase()
@@ -1108,40 +971,19 @@ class WikimediaRepository @Inject constructor(
         ).takeIf(WikimediaContent::hasContent)
     }
 
-    private fun WikimediaContent?.withFallbackImage(fallback: WikimediaContent?): WikimediaContent? {
-        if (this == null) return fallback
-        if (imageUrl != null || fallback == null) return this
-        return copy(
-            imageUrl = fallback.imageUrl,
-            imageSourceUrl = fallback.imageSourceUrl,
-            imageAuthor = fallback.imageAuthor,
-            imageLicense = fallback.imageLicense,
-            imageLicenseUrl = fallback.imageLicenseUrl,
-        )
-    }
-
-    /** OSM's explicit image tag is authoritative and replaces discovered fallback imagery. */
-    private fun WikimediaContent?.withPreferredImage(preferred: WikimediaContent): WikimediaContent {
-        return (this ?: WikimediaContent()).copy(
-            imageUrl = preferred.imageUrl,
-            imageSourceUrl = preferred.imageSourceUrl,
-            imageAuthor = preferred.imageAuthor,
-            imageLicense = preferred.imageLicense,
-            imageLicenseUrl = preferred.imageLicenseUrl,
-        )
-    }
-
     private fun WikimediaContent?.withoutImage(): WikimediaContent? = this?.copy(
         imageUrl = null,
         imageSourceUrl = null,
         imageAuthor = null,
         imageLicense = null,
         imageLicenseUrl = null,
+        additionalImages = emptyList(),
     )
 
     private fun WikimediaContent?.withFallbackContent(fallback: WikimediaContent?): WikimediaContent? {
         if (this == null) return fallback
         if (fallback == null) return this
+        val usesFallbackImage = imageUrl == null
         return copy(
             imageUrl = imageUrl ?: fallback.imageUrl,
             description = description ?: fallback.description,
@@ -1150,6 +992,7 @@ class WikimediaRepository @Inject constructor(
             imageAuthor = imageAuthor ?: fallback.imageAuthor,
             imageLicense = imageLicense ?: fallback.imageLicense,
             imageLicenseUrl = imageLicenseUrl ?: fallback.imageLicenseUrl,
+            additionalImages = if (usesFallbackImage) fallback.additionalImages else additionalImages,
         )
     }
 
@@ -1164,15 +1007,6 @@ class WikimediaRepository @Inject constructor(
         }
     }
 
-    private suspend fun requestJsonPost(url: String, body: FormBody): JSONObject = requestJson {
-        Request.Builder()
-            .url(url)
-            .header("User-Agent", USER_AGENT)
-            .header("Accept", "application/json")
-            .post(body)
-            .build()
-    }
-
     private suspend fun requestMapillaryJson(url: String, token: String): JSONObject = requestJson {
         Request.Builder()
             .url(url)
@@ -1181,6 +1015,21 @@ class WikimediaRepository @Inject constructor(
             .header("Authorization", "OAuth $token")
             .get()
             .build()
+    }
+
+    private fun WikimediaContent?.withImages(candidates: List<WikimediaContent>): WikimediaContent? {
+        val images = candidates.flatMap(WikimediaContent::images)
+            .distinctBy(WikimediaImage::imageUrl)
+            .take(MAX_IMAGES_PER_POI)
+        val primary = images.firstOrNull() ?: return this
+        return (this ?: WikimediaContent()).copy(
+            imageUrl = primary.imageUrl,
+            imageSourceUrl = primary.imageSourceUrl,
+            imageAuthor = primary.imageAuthor,
+            imageLicense = primary.imageLicense,
+            imageLicenseUrl = primary.imageLicenseUrl,
+            additionalImages = images.drop(1),
+        )
     }
 
     private suspend fun requestJson(buildRequest: () -> Request): JSONObject {
@@ -1253,6 +1102,7 @@ class WikimediaRepository @Inject constructor(
                 imageAuthor = json.nullableString("imageAuthor"),
                 imageLicense = json.nullableString("imageLicense"),
                 imageLicenseUrl = json.nullableString("imageLicenseUrl"),
+                additionalImages = json.optJSONArray("additionalImages").toWikimediaImages(),
             )
             val entry = CacheEntry(content, json.getLong("fetchedAt"))
             if (entry.isExpired(System.currentTimeMillis())) {
@@ -1277,6 +1127,17 @@ class WikimediaRepository @Inject constructor(
                 putNullable("imageAuthor", entry.content.imageAuthor)
                 putNullable("imageLicense", entry.content.imageLicense)
                 putNullable("imageLicenseUrl", entry.content.imageLicenseUrl)
+                if (entry.content.additionalImages.isNotEmpty()) {
+                    put("additionalImages", JSONArray(entry.content.additionalImages.map { image ->
+                        JSONObject().apply {
+                            put("imageUrl", image.imageUrl)
+                            putNullable("imageSourceUrl", image.imageSourceUrl)
+                            putNullable("imageAuthor", image.imageAuthor)
+                            putNullable("imageLicense", image.imageLicense)
+                            putNullable("imageLicenseUrl", image.imageLicenseUrl)
+                        }
+                    }))
+                }
             }
             cacheFile(ref).writeText(json.toString())
         }.onFailure { Log.w(TAG, "Failed to cache Wikimedia content", it) }
@@ -1310,9 +1171,24 @@ class WikimediaRepository @Inject constructor(
         if (value != null) put(key, value)
     }
 
+    private fun JSONArray?.toWikimediaImages(): List<WikimediaImage> {
+        this ?: return emptyList()
+        return (0 until length()).mapNotNull { index ->
+            val json = optJSONObject(index) ?: return@mapNotNull null
+            WikimediaImage(
+                imageUrl = json.nullableString("imageUrl") ?: return@mapNotNull null,
+                imageSourceUrl = json.nullableString("imageSourceUrl"),
+                imageAuthor = json.nullableString("imageAuthor"),
+                imageLicense = json.nullableString("imageLicense"),
+                imageLicenseUrl = json.nullableString("imageLicenseUrl"),
+            )
+        }
+    }
+
     private companion object {
         const val TAG = "WikimediaRepository"
-        const val CACHE_VERSION = 17
+        const val CACHE_VERSION = 20
+        const val MAX_IMAGES_PER_POI = 3
         const val MAX_SEARCH_NAMES = 3
         const val MIN_WIKIDATA_NAME_SCORE = 2
         const val WIKIDATA_EXACT_NAME_SCORE = 4
@@ -1320,16 +1196,23 @@ class WikimediaRepository @Inject constructor(
         const val HOST_IMAGE_MAX_DISTANCE_METERS = 50.0
         const val COMMONS_IMAGE_WIDTH = 960
         const val COMMONS_NEARBY_RADIUS_METERS = 1_000.0
-        const val COMMONS_UNNAMED_IMAGE_DISTANCE_METERS = 25.0
         const val STRONG_IMAGE_TITLE_SCORE = 2
         const val IMAGE_EXACT_PHRASE_BONUS = 3
-        const val STREET_IMAGE_RADIUS_METERS = 60.0
-        const val STREET_IMAGE_NO_HEADING_DISTANCE_METERS = 10.0
-        const val MAPILLARY_HALF_FOV_DEGREES = 50.0
-        const val KARTAVIEW_HALF_FOV_DEGREES = 50.0
+        const val WEBSITE_HTML_LIMIT_BYTES = 1_000_000L
         val MAPILLARY_BARE_ID = Regex("[A-Za-z0-9_-]{5,}")
         val MAPILLARY_URL_ID = Regex("(?:[?&#](?:pKey|image_key)=)([A-Za-z0-9_-]{5,})")
-        val MAPILLARY_PANORAMA_TYPES = setOf("spherical", "equirectangular")
+        val META_TAG = Regex("<meta\\b[^>]*>", RegexOption.IGNORE_CASE)
+        val HTML_ATTRIBUTE = Regex(
+            "([\\w:-]+)\\s*=\\s*(['\"])(.*?)\\2",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+        )
+        val IMAGE_SRC_LINK = Regex(
+            "<link\\b(?=[^>]*\\brel\\s*=\\s*(['\"])image_src\\1)[^>]*\\bhref\\s*=\\s*(['\"])(.*?)\\2[^>]*>",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+        )
+        val WEBSITE_IMAGE_PROPERTIES = setOf(
+            "og:image", "og:image:url", "twitter:image", "twitter:image:src",
+        )
         val PANORAMAX_ID = Regex(
             "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
         )

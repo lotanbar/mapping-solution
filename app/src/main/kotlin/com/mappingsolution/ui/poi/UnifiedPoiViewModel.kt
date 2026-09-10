@@ -38,6 +38,8 @@ import javax.inject.Inject
 data class UnifiedPoiMedia(
     val path: String,
     val isPersonal: Boolean,
+    val imageSourceUrl: String? = null,
+    val imageCredit: String? = null,
 )
 
 data class UnifiedPoiState(
@@ -237,10 +239,19 @@ class UnifiedPoiViewModel @Inject constructor(
             val content = runCatching { osmPoiRepository.fetchWikimediaContent(poi.id) }.getOrNull() ?: return@launch
             _state.update { current ->
                 val description = current.sourceDescription.ifBlank { content.description.orEmpty() }
-                val remoteImage = content.imageUrl?.let { UnifiedPoiMedia(it, false) }
+                val remoteImages = content.images.map { image ->
+                    UnifiedPoiMedia(
+                        path = image.imageUrl,
+                        isPersonal = false,
+                        imageSourceUrl = image.imageSourceUrl ?: image.imageLicenseUrl,
+                        imageCredit = image.imageCredit ?: if (
+                            image.imageSourceUrl?.contains("wikimedia.org", ignoreCase = true) == true
+                        ) "Wikimedia Commons" else "Linked by OpenStreetMap",
+                    )
+                }
                 current.copy(
                     sourceDescription = description,
-                    media = listOfNotNull(remoteImage) + current.media.filterNot { !it.isPersonal && it.path.startsWith("http") },
+                    media = remoteImages + current.media.filterNot { !it.isPersonal && it.path.startsWith("http") },
                     wikimedia = content,
                 )
             }

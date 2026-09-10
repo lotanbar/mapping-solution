@@ -46,6 +46,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -159,6 +160,7 @@ fun UnifiedPoiScreen(
                     immutable + state.draftPersonalMedia.map { UnifiedPoiMedia(it, true) }
                 } else state.media
                 val paths = shownMedia.map { it.path }
+                var selectedMediaIndex by remember(paths) { mutableIntStateOf(0) }
 
                 BoxWithConstraints(
                     modifier = Modifier
@@ -183,10 +185,15 @@ fun UnifiedPoiScreen(
                                 }) else null,
                                 canRemoveItem = { shownMedia[it].isPersonal },
                                 onLongClick = if (state.isEditing) ::openCamera else null,
+                                onPageChanged = { selectedMediaIndex = it },
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
-                        WikimediaImageCredit(state, context, Modifier.align(Alignment.BottomStart))
+                        WikimediaImageCredit(
+                            shownMedia.getOrNull(selectedMediaIndex),
+                            context,
+                            Modifier.align(Alignment.BottomStart),
+                        )
                     }
 
                     Column(
@@ -487,11 +494,10 @@ private fun PoiActionButton(
 }
 
 @Composable
-private fun WikimediaImageCredit(state: UnifiedPoiState, context: android.content.Context, modifier: Modifier = Modifier) {
-    val content = state.wikimedia ?: return
-    val url = content.imageSourceUrl ?: content.imageLicenseUrl ?: return
+private fun WikimediaImageCredit(media: UnifiedPoiMedia?, context: android.content.Context, modifier: Modifier = Modifier) {
+    val url = media?.imageSourceUrl ?: return
     Text(
-        "Photo: ${content.imageCredit ?: "Wikimedia Commons"}",
+        "Photo: ${media.imageCredit ?: "Wikimedia Commons"}",
         style = MaterialTheme.typography.labelSmall,
         color = Color.White,
         modifier = modifier
