@@ -3,6 +3,7 @@ package com.mappingsolution.data.places
 import android.content.Context
 import android.text.Html
 import android.util.Log
+import com.mappingsolution.BuildConfig
 import com.mappingsolution.data.model.Poi
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -82,7 +83,7 @@ class WikimediaRepository @Inject constructor(
             val attempt = ResolutionAttempt()
             val resolved = try {
                 val exactImage = attempt.firstProvider(poi.imageRefs.map { ref ->
-                    suspend { resolveExactImageRef(ref) }
+                    suspend { resolveExactImageRef(ref, poi.name) }
                 })
                 val linked = attempt.provider {
                     poi.wikiRef?.let { resolve(it, poi.name, attempt) }
@@ -116,6 +117,7 @@ class WikimediaRepository @Inject constructor(
                 else withSemanticImage.withFallbackImage(
                     attempt.firstProvider(
                         listOf(
+                            { resolveMapillaryImage(poi) },
                             { resolvePanoramaxImage(poi) },
                             { resolveKartaViewImage(poi) },
                         ),
@@ -162,11 +164,17 @@ class WikimediaRepository @Inject constructor(
         }
     }
 
-    private suspend fun resolveExactImageRef(ref: String): WikimediaContent? {
+    private suspend fun resolveExactImageRef(ref: String, poiName: String): WikimediaContent? {
         return when {
             ref.startsWith("panoramax:") -> resolvePanoramaxId(ref.substringAfter(':'))
             ref.startsWith("kartaview:") -> resolveKartaViewId(ref.substringAfter(':'))
+            ref.startsWith("mapillary:") -> resolveMapillaryId(ref.substringAfter(':'))
             ref.startsWith("flickr:") -> resolveFlickrUrl(ref.substringAfter(':'))
+            ref.startsWith("File:") -> resolveCommonsFile(ref)
+            ref.startsWith("Category:") -> resolveCommonsCategory(ref, poiName)
+            "panoramax.xyz" in ref -> resolvePanoramaxId(ref)
+            "kartaview.org" in ref || "openstreetcam.org" in ref -> resolveKartaViewId(ref)
+            "mapillary.com" in ref -> resolveMapillaryId(ref)
             "flickr.com" in ref -> resolveFlickrUrl(ref)
             "commons.wikimedia.org" in ref || "upload.wikimedia.org" in ref -> {
                 val fileRef = commonsFileRef(ref)
@@ -194,8 +202,7 @@ class WikimediaRepository @Inject constructor(
     }
 
     private suspend fun resolvePanoramaxId(rawId: String): WikimediaContent? {
-        val id = rawId.substringAfterLast('/').substringBefore('?').trim()
-        if (id.isBlank()) return null
+        val id = PANORAMAX_ID.find(rawId)?.value ?: return null
         val json = requestJson("https://api.panoramax.xyz/api/search?ids=$id&limit=1")
         return panoramaFeatureContent(json.optJSONArray("features")?.optJSONObject(0))
     }
@@ -212,6 +219,16 @@ class WikimediaRepository @Inject constructor(
             imageLicense = "CC BY-SA 4.0",
             imageLicenseUrl = "https://creativecommons.org/licenses/by-sa/4.0/",
         )
+    }
+
+    private suspend fun resolveMapillaryId(rawId: String): WikimediaContent? {
+        val token = BuildConfig.MAPILLARY_ACCESS_TOKEN.trim()
+        if (token.isBlank()) return null
+        val id = mapillaryImageId(rawId) ?: return null
+        val url = "https://graph.mapillary.com/$id".toHttpUrl().newBuilder()
+            .addQueryParameter("fields", "id,thumb_1024_url,creator")
+            .build()
+        return mapillaryContent(requestMapillaryJson(url.toString(), token))
     }
 
     private suspend fun resolveFlickrUrl(rawUrl: String): WikimediaContent? {
@@ -773,6 +790,75 @@ class WikimediaRepository @Inject constructor(
     }
 
     /** Open, geotagged street imagery. Only accepts a planar photo facing the POI. */
+    private suspend fun resolveMapillaryImage(poi: Poi): WikimediaContent? {
+        val token = BuildConfig.MAPILLARY_ACCESS_TOKEN.trim()
+        if (token.isBlank()) return null
+        val latDelta = STREET_IMAGE_RADIUS_METERS / 111_320.0
+        val lonDelta = latDelta / kotlin.math.cos(Math.toRadians(poi.lat)).coerceAtLeast(0.1)
+        val bbox = listOf(
+            poi.lng - lonDelta,
+            poi.lat - latDelta,
+            poi.lng + lonDelta,
+            poi.lat + latDelta,
+        ).joinToString(",")
+        val url = "https://graph.mapillary.com/images".toHttpUrl().newBuilder()
+            .addQueryParameter(
+                "fields",
+                "id,thumb_1024_url,creator,computed_geometry,geometry,compass_angle,camera_type",
+            )
+            .addQueryParameter("bbox", bbox)
+            .addQueryParameter("limit", "30")
+            .build()
+        val items = requestMapillaryJson(url.toString(), token).optJSONArray("data") ?: return null
+        return (0 until items.length()).mapNotNull { index ->
+            val item = items.optJSONObject(index) ?: return@mapNotNull null
+            if (item.optString("camera_type").lowercase() in MAPILLARY_PANORAMA_TYPES) {
+                return@mapNotNull null
+            }
+            val geometry = item.optJSONObject("computed_geometry")
+                ?: item.optJSONObject("geometry")
+                ?: return@mapNotNull null
+            val coordinates = geometry.optJSONArray("coordinates") ?: return@mapNotNull null
+            val photoLng = coordinates.optDouble(0, Double.NaN)
+            val photoLat = coordinates.optDouble(1, Double.NaN)
+            if (!photoLat.isFinite() || !photoLng.isFinite()) return@mapNotNull null
+            val distance = distanceMeters(poi.lat, poi.lng, photoLat, photoLng)
+            if (distance > STREET_IMAGE_RADIUS_METERS) return@mapNotNull null
+            val heading = item.optDouble("compass_angle", Double.NaN)
+            if (!facesPoi(
+                    photoLat,
+                    photoLng,
+                    heading,
+                    MAPILLARY_HALF_FOV_DEGREES,
+                    poi,
+                    distance,
+                )
+            ) return@mapNotNull null
+            distance to (mapillaryContent(item) ?: return@mapNotNull null)
+        }.minByOrNull { it.first }?.second
+    }
+
+    private fun mapillaryContent(item: JSONObject): WikimediaContent? {
+        val id = item.optString("id").ifBlank { return null }
+        val imageUrl = item.optString("thumb_1024_url").ifBlank { return null }
+        val creator = item.optJSONObject("creator")
+        return WikimediaContent(
+            imageUrl = imageUrl,
+            imageSourceUrl = "https://www.mapillary.com/app/?pKey=$id&focus=photo",
+            imageAuthor = creator?.optString("username")?.ifBlank { null }
+                ?: "Mapillary contributor",
+            imageLicense = "CC BY-SA 4.0",
+            imageLicenseUrl = "https://creativecommons.org/licenses/by-sa/4.0/",
+        )
+    }
+
+    private fun mapillaryImageId(rawValue: String): String? {
+        val value = rawValue.trim()
+        if (value.matches(MAPILLARY_BARE_ID)) return value
+        return MAPILLARY_URL_ID.find(value)?.groupValues?.getOrNull(1)
+    }
+
+    /** Open, geotagged street imagery. Only accepts a planar photo facing the POI. */
     private suspend fun resolvePanoramaxImage(poi: Poi): WikimediaContent? {
         val latDelta = STREET_IMAGE_RADIUS_METERS / 111_320.0
         val lonDelta = latDelta / kotlin.math.cos(Math.toRadians(poi.lat)).coerceAtLeast(0.1)
@@ -1087,6 +1173,16 @@ class WikimediaRepository @Inject constructor(
             .build()
     }
 
+    private suspend fun requestMapillaryJson(url: String, token: String): JSONObject = requestJson {
+        Request.Builder()
+            .url(url)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "application/json")
+            .header("Authorization", "OAuth $token")
+            .get()
+            .build()
+    }
+
     private suspend fun requestJson(buildRequest: () -> Request): JSONObject {
         var lastError: IOException? = null
         repeat(MAX_ATTEMPTS) { attempt ->
@@ -1191,7 +1287,12 @@ class WikimediaRepository @Inject constructor(
         val fetchedAt: Long,
     ) {
         fun isExpired(now: Long): Boolean {
-            val ttl = if (content.imageUrl != null) CACHE_TTL_MS else IMAGE_MISS_CACHE_TTL_MS
+            val ttl = when {
+                content.imageUrl == null -> IMAGE_MISS_CACHE_TTL_MS
+                content.imageSourceUrl?.contains("mapillary.com") == true ->
+                    MAPILLARY_CACHE_TTL_MS
+                else -> CACHE_TTL_MS
+            }
             return now - fetchedAt > ttl
         }
     }
@@ -1211,7 +1312,7 @@ class WikimediaRepository @Inject constructor(
 
     private companion object {
         const val TAG = "WikimediaRepository"
-        const val CACHE_VERSION = 16
+        const val CACHE_VERSION = 17
         const val MAX_SEARCH_NAMES = 3
         const val MIN_WIKIDATA_NAME_SCORE = 2
         const val WIKIDATA_EXACT_NAME_SCORE = 4
@@ -1224,7 +1325,14 @@ class WikimediaRepository @Inject constructor(
         const val IMAGE_EXACT_PHRASE_BONUS = 3
         const val STREET_IMAGE_RADIUS_METERS = 60.0
         const val STREET_IMAGE_NO_HEADING_DISTANCE_METERS = 10.0
+        const val MAPILLARY_HALF_FOV_DEGREES = 50.0
         const val KARTAVIEW_HALF_FOV_DEGREES = 50.0
+        val MAPILLARY_BARE_ID = Regex("[A-Za-z0-9_-]{5,}")
+        val MAPILLARY_URL_ID = Regex("(?:[?&#](?:pKey|image_key)=)([A-Za-z0-9_-]{5,})")
+        val MAPILLARY_PANORAMA_TYPES = setOf("spherical", "equirectangular")
+        val PANORAMAX_ID = Regex(
+            "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+        )
         val FLICKR_LICENSES = mapOf(
             "4" to ("CC BY 2.0" to "https://creativecommons.org/licenses/by/2.0/"),
             "5" to ("CC BY-SA 2.0" to "https://creativecommons.org/licenses/by-sa/2.0/"),
@@ -1237,6 +1345,7 @@ class WikimediaRepository @Inject constructor(
         const val REQUEST_INTERVAL_MS = 500L
         const val MAX_ATTEMPTS = 3
         const val CACHE_TTL_MS = 30L * 24 * 60 * 60 * 1000
+        const val MAPILLARY_CACHE_TTL_MS = 7L * 24 * 60 * 60 * 1000
         const val IMAGE_MISS_CACHE_TTL_MS = 24L * 60 * 60 * 1000
         val REJECTED_IMAGE_WORDS = listOf(
             "map", "mapa", "karte", "plan", "logo", "flag", "coat of arms", "locator",

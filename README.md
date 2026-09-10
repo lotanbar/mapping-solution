@@ -12,6 +12,18 @@ An Android app for recording GPS data and monitoring trips. Built with modern Ko
 - **Library** — Browse/search groups, POIs, and routes. Toggle visibility, multi-select, delete, orphan, re-group.
 - **Import** — GPX files only (see below).
 
+### Optional image source setup
+
+To enable Mapillary images for OSM POIs, create a Mapillary client access token and add it to the
+untracked `local.properties` file:
+
+```properties
+MAPILLARY_ACCESS_TOKEN=MLY|your-client-token
+```
+
+Without a token, the existing Wikimedia, Openverse, Panoramax, KartaView, and linked Flickr image
+sources continue to work normally.
+
 ---
 
 ## Data Models

@@ -29,6 +29,11 @@ android {
             "MAPTILER_API_KEY",
             "\"${localProperties.getProperty("MAPTILER_API_KEY", "uibCuK5qN9WReQo07MMt")}\""
         )
+        buildConfigField(
+            "String",
+            "MAPILLARY_ACCESS_TOKEN",
+            "\"${localProperties.getProperty("MAPILLARY_ACCESS_TOKEN", "")}\""
+        )
     }
 
     buildTypes {

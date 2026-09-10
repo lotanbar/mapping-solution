@@ -203,9 +203,11 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
                                 tagsMap["kartaview"]?.let { "kartaview:$it" },
                                 tagsMap["mapillary"]?.let { "mapillary:$it" },
                                 tagsMap["flickr"]?.let { "flickr:$it" },
+                                tagsMap["wikimedia_commons"],
                                 tagsMap["image"],
                                 tagsMap["photo"],
                                 tagsMap["url:photo"],
+                                tagsMap["picture"],
                             ).flatMap { it.split(';') }
                                 .map(String::trim).filter(String::isNotBlank).distinct()
                             val desc = tagsMap["description"]
