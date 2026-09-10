@@ -127,6 +127,11 @@ class MainViewModel @Inject constructor(
         mapHolder.saveCamera(lat, lng, zoom, bearing, tilt)
     }
 
+    /** Makes a transient rendered map label available to the existing OSM detail route. */
+    fun registerMapLabelPoi(poi: Poi) {
+        osmPoiRepository.registerTransientPoi(poi)
+    }
+
     /**
      * Called whenever the map camera becomes idle. Saves the position and, when zoomed in
      * enough, triggers debounced POI fetches for both sources.

@@ -66,6 +66,8 @@ import com.mappingsolution.ui.common.GroupPickerField
 import com.mappingsolution.ui.common.resolvedTextAlign
 import com.mappingsolution.ui.common.resolvedTextDirection
 import com.mappingsolution.ui.common.isRtl
+import com.mappingsolution.ui.common.resolvedParagraphTextAlign
+import com.mappingsolution.ui.common.resolvedParagraphTextDirection
 import com.mappingsolution.ui.searchnplan.NavigationIntentHelper
 import java.io.File
 
@@ -175,6 +177,7 @@ fun UnifiedPoiScreen(
                             NoMediaPlaceholder(
                                 modifier = Modifier.fillMaxSize(),
                                 onLongClick = if (state.isEditing) ::openCamera else null,
+                                isLoading = state.isEnrichmentLoading,
                             )
                         } else {
                             PoiMediaPager(
@@ -286,12 +289,40 @@ fun UnifiedPoiScreen(
 private fun ReadOnlyPoiContent(state: UnifiedPoiState) {
     val poi = requireNotNull(state.sourcePoi)
     TitleWithSourceIcon(title = poi.name, state = state)
-    PoiValue(state.sourceDescription.ifBlank { PoiScreenText.NO_DESCRIPTION }, maxLines = 3)
+    ExpandableDescription(
+        value = state.sourceDescription.ifBlank {
+            if (state.isEnrichmentLoading) PoiScreenText.LOADING_DESCRIPTION else PoiScreenText.NO_DESCRIPTION
+        },
+    )
     if (state.isStarred && state.personalNote.isNotBlank()) {
         PoiValue(state.personalNote, maxLines = 3, fontWeight = FontWeight.Medium)
     }
     PoiValue(state.personalGroup?.name ?: PoiScreenText.NO_GROUP, maxLines = 1)
     state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+}
+
+@Composable
+private fun ExpandableDescription(value: String) {
+    var expanded by remember(value) { mutableStateOf(false) }
+    var hasOverflow by remember(value) { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyLarge.copy(
+                textDirection = value.resolvedParagraphTextDirection(),
+                textAlign = value.resolvedParagraphTextAlign(),
+            ),
+            modifier = Modifier.fillMaxWidth(),
+            maxLines = if (expanded) Int.MAX_VALUE else 3,
+            overflow = if (expanded) TextOverflow.Clip else TextOverflow.Ellipsis,
+            onTextLayout = { result -> if (!expanded) hasOverflow = result.hasVisualOverflow },
+        )
+        if (expanded || hasOverflow) {
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "Show less" else "Show more")
+            }
+        }
+    }
 }
 
 @Composable
@@ -511,7 +542,11 @@ private fun WikimediaImageCredit(media: UnifiedPoiMedia?, context: android.conte
 private fun WikimediaTextCredit(state: UnifiedPoiState, context: android.content.Context) {
     val url = state.wikimedia?.pageUrl ?: return
     Text(
-        "Source: Wikipedia / Wikidata",
+        if (url.contains("wikipedia.org", ignoreCase = true)) {
+            "Read full article on Wikipedia"
+        } else {
+            "View source on Wikidata"
+        },
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.clickable { openUrl(context, url) },

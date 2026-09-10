@@ -14,6 +14,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -33,8 +34,14 @@ class OsmPoiRepository @Inject constructor(
 
     @Volatile private var lastFetchedBounds: FetchedBounds? = null
     @Volatile private var fetchedPois: List<Poi> = emptyList()
+    private val transientPois = ConcurrentHashMap<String, Poi>()
 
-    fun getById(id: String): Poi? = _pois.value.find { it.id == id }
+    fun getById(id: String): Poi? = transientPois[id] ?: _pois.value.find { it.id == id }
+
+    /** Registers a detail-only POI without adding a new marker to the map. */
+    fun registerTransientPoi(poi: Poi) {
+        transientPois[poi.id] = poi
+    }
 
     /** Resolves reusable Wikimedia image/summary metadata for an OSM POI. */
     suspend fun fetchWikimediaContent(id: String): WikimediaContent? = withContext(Dispatchers.IO) {
@@ -228,6 +235,7 @@ class OsmPoiRepository @Inject constructor(
     fun clear() {
         _pois.value = emptyList()
         fetchedPois = emptyList()
+        transientPois.clear()
         lastFetchedBounds = null
     }
 

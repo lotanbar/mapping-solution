@@ -13,6 +13,7 @@ class UnifiedPoiContractTest {
         assertEquals("No image", PoiScreenText.NO_IMAGE)
         assertEquals("No description", PoiScreenText.NO_DESCRIPTION)
         assertEquals("No group", PoiScreenText.NO_GROUP)
+        assertEquals("Loading photos and description…", PoiScreenText.LOADING_CONTENT)
     }
 
     @Test

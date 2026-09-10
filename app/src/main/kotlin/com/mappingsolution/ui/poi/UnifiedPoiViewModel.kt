@@ -44,6 +44,7 @@ data class UnifiedPoiMedia(
 
 data class UnifiedPoiState(
     val isLoading: Boolean = true,
+    val isEnrichmentLoading: Boolean = false,
     val isSaving: Boolean = false,
     val kind: PoiScreenKind = PoiScreenKind.CREATION,
     val sourcePoi: Poi? = null,
@@ -193,6 +194,7 @@ class UnifiedPoiViewModel @Inject constructor(
         }
         _state.value = UnifiedPoiState(
             isLoading = false,
+            isEnrichmentLoading = sourceType == DestinationSource.OSM,
             kind = kind,
             sourcePoi = source,
             bookmark = bookmark,
@@ -236,24 +238,29 @@ class UnifiedPoiViewModel @Inject constructor(
 
     private fun enrichOsm(poi: Poi) {
         viewModelScope.launch {
-            val content = runCatching { osmPoiRepository.fetchWikimediaContent(poi.id) }.getOrNull() ?: return@launch
+            val content = runCatching { osmPoiRepository.fetchWikimediaContent(poi.id) }.getOrNull()
             _state.update { current ->
-                val description = current.sourceDescription.ifBlank { content.description.orEmpty() }
-                val remoteImages = content.images.map { image ->
-                    UnifiedPoiMedia(
-                        path = image.imageUrl,
-                        isPersonal = false,
-                        imageSourceUrl = image.imageSourceUrl ?: image.imageLicenseUrl,
-                        imageCredit = image.imageCredit ?: if (
-                            image.imageSourceUrl?.contains("wikimedia.org", ignoreCase = true) == true
-                        ) "Wikimedia Commons" else "Linked by OpenStreetMap",
+                if (content == null) {
+                    current.copy(isEnrichmentLoading = false)
+                } else {
+                    val description = current.sourceDescription.ifBlank { content.description.orEmpty() }
+                    val remoteImages = content.images.map { image ->
+                        UnifiedPoiMedia(
+                            path = image.imageUrl,
+                            isPersonal = false,
+                            imageSourceUrl = image.imageSourceUrl ?: image.imageLicenseUrl,
+                            imageCredit = image.imageCredit ?: if (
+                                image.imageSourceUrl?.contains("wikimedia.org", ignoreCase = true) == true
+                            ) "Wikimedia Commons" else "Linked by OpenStreetMap",
+                        )
+                    }
+                    current.copy(
+                        isEnrichmentLoading = false,
+                        sourceDescription = description,
+                        media = remoteImages + current.media.filterNot { !it.isPersonal && it.path.startsWith("http") },
+                        wikimedia = content,
                     )
                 }
-                current.copy(
-                    sourceDescription = description,
-                    media = remoteImages + current.media.filterNot { !it.isPersonal && it.path.startsWith("http") },
-                    wikimedia = content,
-                )
             }
         }
     }

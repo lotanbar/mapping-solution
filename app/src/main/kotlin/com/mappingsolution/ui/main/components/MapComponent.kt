@@ -31,6 +31,7 @@ import com.mappingsolution.createCircleIcon
 import com.mappingsolution.createPinBitmap
 import com.mappingsolution.createSquareIcon
 import com.mappingsolution.data.map.MapStyle
+import com.mappingsolution.data.map.MapLabelPoiFactory
 import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.model.RasterLayer
@@ -210,6 +211,7 @@ fun MapComponent(
     onRouteTapped: (String) -> Unit = {},
     onOsmPoiTapped: (String) -> Unit = {},
     onBulkPoiTapped: (String) -> Unit = {},
+    onMapLabelTapped: (Poi) -> Unit = {},
     onMapReady: (MapLibreMap) -> Unit = {},
     onMapDisposed: () -> Unit = {},
     onMapError: (String) -> Unit = {},
@@ -224,6 +226,7 @@ fun MapComponent(
     val onRouteTappedRef = rememberUpdatedState(onRouteTapped)
     val onOsmPoiTappedRef = rememberUpdatedState(onOsmPoiTapped)
     val onBulkPoiTappedRef = rememberUpdatedState(onBulkPoiTapped)
+    val onMapLabelTappedRef = rememberUpdatedState(onMapLabelTapped)
     val onCameraIdleRef = rememberUpdatedState(onCameraIdle)
     val onBoundsChangedRef = rememberUpdatedState(onBoundsChanged)
     val onDoubleTapRef = rememberUpdatedState(onDoubleTap)
@@ -702,6 +705,28 @@ fun MapComponent(
                             onRouteTappedRef.value(routeId)
                             return@addOnMapClickListener true
                         }
+                    }
+                    // Named labels from the active MapTiler base style come last. Query only
+                    // eligible symbol source-layers so streets, contours, trails, routes, and
+                    // every custom app layer remain non-tappable.
+                    val labelPoi = map.style?.layers.orEmpty()
+                        .filterIsInstance<SymbolLayer>()
+                        .filter { layer ->
+                            MapLabelPoiFactory.isEligibleLayer(layer.sourceId, layer.sourceLayer)
+                        }
+                        .asReversed()
+                        .asSequence()
+                        .flatMap { layer ->
+                            map.queryRenderedFeatures(rect, layer.id).asSequence()
+                                .map { feature -> feature to layer.sourceLayer }
+                        }
+                        .mapNotNull { (feature, sourceLayer) ->
+                            MapLabelPoiFactory.fromRenderedFeature(feature, sourceLayer)
+                        }
+                        .firstOrNull()
+                    if (labelPoi != null) {
+                        onMapLabelTappedRef.value(labelPoi)
+                        return@addOnMapClickListener true
                     }
                     false
                 }

@@ -5,6 +5,8 @@ object PoiScreenText {
     const val NO_IMAGE = "No image"
     const val NO_DESCRIPTION = "No description"
     const val NO_GROUP = "No group"
+    const val LOADING_CONTENT = "Loading photos and description…"
+    const val LOADING_DESCRIPTION = "Loading description…"
 }
 
 /** The mutually exclusive states supported by the unified POI screen. */

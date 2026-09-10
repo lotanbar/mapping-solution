@@ -24,3 +24,22 @@ fun String.resolvedTextDirection(): TextDirection =
 
 fun String.resolvedTextAlign(): TextAlign =
     if (isRtl()) TextAlign.Right else TextAlign.Left
+
+/** Paragraph direction follows its first real letter, so an English article mentioning Hebrew
+ * names does not incorrectly flip the entire paragraph to RTL. */
+fun String.isRtlParagraph(): Boolean {
+    for (char in this) {
+        when (Character.getDirectionality(char)) {
+            Character.DIRECTIONALITY_RIGHT_TO_LEFT,
+            Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC -> return true
+            Character.DIRECTIONALITY_LEFT_TO_RIGHT -> return false
+        }
+    }
+    return false
+}
+
+fun String.resolvedParagraphTextDirection(): TextDirection =
+    if (isRtlParagraph()) TextDirection.Rtl else TextDirection.Ltr
+
+fun String.resolvedParagraphTextAlign(): TextAlign =
+    if (isRtlParagraph()) TextAlign.Right else TextAlign.Left

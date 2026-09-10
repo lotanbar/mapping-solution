@@ -341,12 +341,13 @@ class WikimediaRepository @Inject constructor(
         val title = ref.substring(separator + 1)
         val url = "https://$language.wikipedia.org/w/api.php".toHttpUrl().newBuilder()
             .addQueryParameter("action", "query")
-            .addQueryParameter("prop", "extracts|pageprops|pageimages|coordinates|info")
+            .addQueryParameter("prop", "extracts|pageprops|pageimages|coordinates|info|images")
             .addQueryParameter("exintro", "1")
             .addQueryParameter("explaintext", "1")
             .addQueryParameter("redirects", "1")
             .addQueryParameter("inprop", "url")
             .addQueryParameter("piprop", "name")
+            .addQueryParameter("imlimit", "20")
             .addQueryParameter("titles", title)
             .addQueryParameter("format", "json")
             .addQueryParameter("formatversion", "2")
@@ -381,7 +382,19 @@ class WikimediaRepository @Inject constructor(
         }
         val pageImage = page.optString("pageimage").ifBlank { null }
             ?.let { attempt.provider { resolveCommonsFile("File:$it") } }
-        val image = wikidata?.takeIf { it.imageUrl != null } ?: pageImage
+        val articleFileRefs = page.optJSONArray("images")?.let { images ->
+            (0 until images.length()).mapNotNull { index ->
+                images.optJSONObject(index)?.optString("title")?.takeIf { it.startsWith("File:") }
+            }
+        }.orEmpty()
+        val currentImages = listOfNotNull(wikidata, pageImage)
+            .flatMap(WikimediaContent::images)
+            .distinctBy(WikimediaImage::imageUrl)
+        val articleImages = if (currentImages.size < MAX_IMAGES_PER_POI) {
+            attempt.provider { resolveCommonsFiles(articleFileRefs, page.optString("title")) }
+        } else null
+        val imageCandidates = listOfNotNull(wikidata, pageImage, articleImages)
+        val image = imageCandidates.firstOrNull()?.withImages(imageCandidates)
         return WikimediaContent(
             imageUrl = image?.imageUrl,
             description = description,
@@ -622,12 +635,19 @@ class WikimediaRepository @Inject constructor(
             ?.optJSONObject("datavalue")
             ?.optString("value")
             ?.ifBlank { null }
-        val image = filename?.let { attempt.provider { resolveCommonsFile("File:$it") } }
-            ?: commonsCategory?.let {
-                attempt.provider { resolveCommonsCategory("Category:$it", "") }
-            }
-            ?: attempt.provider { resolveCommonsDepiction(id) }
-            ?: attempt.provider { resolveCloseHostImage(entity, id) }
+        val imageCandidates = mutableListOf<WikimediaContent>()
+        filename?.let { attempt.provider { resolveCommonsFile("File:$it") } }
+            ?.let(imageCandidates::add)
+        commonsCategory?.let {
+            attempt.provider { resolveCommonsCategory("Category:$it", "") }
+        }?.let(imageCandidates::add)
+        if (imageCandidates.flatMap(WikimediaContent::images).distinctBy(WikimediaImage::imageUrl).size < MAX_IMAGES_PER_POI) {
+            attempt.provider { resolveCommonsDepiction(id) }?.let(imageCandidates::add)
+        }
+        if (imageCandidates.isEmpty()) {
+            attempt.provider { resolveCloseHostImage(entity, id) }?.let(imageCandidates::add)
+        }
+        val image = imageCandidates.firstOrNull()?.withImages(imageCandidates)
         return WikimediaContent(
             imageUrl = image?.imageUrl,
             description = description,
@@ -737,6 +757,19 @@ class WikimediaRepository @Inject constructor(
             ?.optJSONObject(0)
             ?: return null
         return imageContent(page)
+    }
+
+    /** Resolves several Commons files in one attributed request, used for article galleries. */
+    private suspend fun resolveCommonsFiles(fileRefs: List<String>, poiName: String): WikimediaContent? {
+        if (fileRefs.isEmpty()) return null
+        val url = commonsImageQuery().newBuilder()
+            .addQueryParameter("titles", fileRefs.take(20).joinToString("|"))
+            .build()
+        return bestImage(
+            requestJson(url.toString()),
+            poiName,
+            requireRelevantTitle = true,
+        )
     }
 
     private suspend fun resolveCommonsCategory(
@@ -1187,7 +1220,7 @@ class WikimediaRepository @Inject constructor(
 
     private companion object {
         const val TAG = "WikimediaRepository"
-        const val CACHE_VERSION = 20
+        const val CACHE_VERSION = 22
         const val MAX_IMAGES_PER_POI = 3
         const val MAX_SEARCH_NAMES = 3
         const val MIN_WIKIDATA_NAME_SCORE = 2

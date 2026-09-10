@@ -396,6 +396,10 @@ fun MainScreen(
                     onRouteTapped = onRouteTapped,
                     onOsmPoiTapped = onOsmPoiTapped,
                     onBulkPoiTapped = onBulkPoiTapped,
+                    onMapLabelTapped = { poi ->
+                        viewModel.registerMapLabelPoi(poi)
+                        onOsmPoiTapped(poi.id)
+                    },
                     onMapError = { mapError = it },
                     liveRoutePoints = (recordingState as? RecordingState.Active)?.let { active ->
                         active.points + listOfNotNull(active.liveHead)

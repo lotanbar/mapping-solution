@@ -21,8 +21,8 @@ android {
         applicationId = "com.mappingsolution"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.2.0-debug"
+        versionCode = 3
+        versionName = "1.3.0-debug"
 
         buildConfigField(
             "String",

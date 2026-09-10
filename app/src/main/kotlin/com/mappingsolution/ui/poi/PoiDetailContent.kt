@@ -16,6 +16,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ImageNotSupported
@@ -49,6 +50,7 @@ import kotlin.random.Random
 fun NoMediaPlaceholder(
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
+    isLoading: Boolean = false,
 ) {
     Box(
         modifier = modifier
@@ -64,14 +66,18 @@ fun NoMediaPlaceholder(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Icon(
-                imageVector = Icons.Default.ImageNotSupported,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                modifier = Modifier.size(52.dp),
-            )
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.size(42.dp))
+            } else {
+                Icon(
+                    imageVector = Icons.Default.ImageNotSupported,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                    modifier = Modifier.size(52.dp),
+                )
+            }
             Text(
-                text = PoiScreenText.NO_IMAGE,
+                text = if (isLoading) PoiScreenText.LOADING_CONTENT else PoiScreenText.NO_IMAGE,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
             )
