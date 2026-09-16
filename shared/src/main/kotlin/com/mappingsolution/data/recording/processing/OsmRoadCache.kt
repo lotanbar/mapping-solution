@@ -1,6 +1,6 @@
 package com.mappingsolution.data.recording.processing
 
-import android.util.Log
+import com.mappingsolution.data.util.AppLog
 import com.google.gson.JsonObject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -124,7 +124,7 @@ class OsmRoadCache @Inject constructor(private val httpClient: OkHttpClient) {
                     fetchTile(key, south, west, north, east)
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "ensureLoaded: unhandled error for $key", e)
+                AppLog.w(TAG, "ensureLoaded: unhandled error for $key", e)
             } finally {
                 inFlight.remove(key)
             }
@@ -264,7 +264,7 @@ class OsmRoadCache @Inject constructor(private val httpClient: OkHttpClient) {
         val body = "data=${java.net.URLEncoder.encode(query, "UTF-8")}"
             .toRequestBody("application/x-www-form-urlencoded".toMediaType())
 
-        Log.d(TAG, "Fetching $key bbox=[S=${"%.4f".format(south)} W=${"%.4f".format(west)} N=${"%.4f".format(north)} E=${"%.4f".format(east)}]")
+        AppLog.d(TAG, "Fetching $key bbox=[S=${"%.4f".format(south)} W=${"%.4f".format(west)} N=${"%.4f".format(north)} E=${"%.4f".format(east)}]")
 
         for (endpoint in OVERPASS_ENDPOINTS) {
             val request = Request.Builder()
@@ -277,26 +277,26 @@ class OsmRoadCache @Inject constructor(private val httpClient: OkHttpClient) {
             val ways = runCatching {
                 httpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        Log.w(TAG, "HTTP ${response.code} from $endpoint for $key")
+                        AppLog.w(TAG, "HTTP ${response.code} from $endpoint for $key")
                         return@runCatching null
                     }
                     val json = JSONObject(response.body!!.string())
-                    Log.d(TAG, "HTTP OK from $endpoint in ${System.currentTimeMillis() - t0} ms")
+                    AppLog.d(TAG, "HTTP OK from $endpoint in ${System.currentTimeMillis() - t0} ms")
                     parseWays(json)
                 }
             }.getOrElse { e ->
-                Log.w(TAG, "Fetch error from $endpoint: ${e.message}")
+                AppLog.w(TAG, "Fetch error from $endpoint: ${e.message}")
                 null
             } ?: continue
 
-            Log.d(TAG, "Tile $key: ${ways.size} ways")
+            AppLog.d(TAG, "Tile $key: ${ways.size} ways")
             evictIfNeeded()
             cache[key] = CachedTile(ways, System.currentTimeMillis())
             rebuildRoadsFlow()
             return true
         }
 
-        Log.e(TAG, "All Overpass endpoints failed for tile $key")
+        AppLog.e(TAG, "All Overpass endpoints failed for tile $key")
         return false
     }
 

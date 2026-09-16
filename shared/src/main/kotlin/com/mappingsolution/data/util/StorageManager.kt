@@ -6,7 +6,10 @@ import java.io.File
  * Resolves every on-disk location under [baseDir], the platform's app-private data directory
  * (Android: `getExternalFilesDir(null)`; desktop: the per-user app data folder).
  */
-class StorageManager(private val baseDir: File) {
+class StorageManager(
+    private val baseDir: File,
+    private val cacheBaseDir: File = File(baseDir, "cache"),
+) {
 
     /** App-private external storage root — for non-image data (JSON, JSONL, recordings, exports). */
     val rootDir: File = File(baseDir, "mapping-solution-assets")
@@ -197,6 +200,9 @@ class StorageManager(private val baseDir: File) {
         File(getMbtilesDir(), "${sanitizeName(name)}_${id.take(8)}.mbtiles")
 
     fun getMbtilesTempFile(): File = File(getMbtilesDir(), "import_tmp_${System.currentTimeMillis()}.mbtiles")
+
+    /** Disposable cache folder [name]; the platform may clear it at any time. */
+    fun getCacheDir(name: String): File = File(cacheBaseDir, name).also { it.mkdirs() }
 
     fun getExportsDir(): File = File(rootDir, "exports").also { it.mkdirs() }
 

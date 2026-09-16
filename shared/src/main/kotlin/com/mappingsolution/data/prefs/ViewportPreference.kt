@@ -1,24 +1,25 @@
 package com.mappingsolution.data.prefs
 
-import android.content.Context
-import dagger.hilt.android.qualifiers.ApplicationContext
+import com.mappingsolution.data.util.KeyValueStore
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class ViewportPreference @Inject constructor(
-    @ApplicationContext context: Context,
+    stores: KeyValueStore.Factory,
 ) {
-    private val prefs = context.getSharedPreferences("viewport", Context.MODE_PRIVATE)
+    private val prefs = stores.open("viewport")
 
     fun save(lat: Double, lng: Double, zoom: Double, bearing: Double = 0.0, tilt: Double = 0.0) {
-        prefs.edit()
-            .putLong("lat", lat.toBits())
-            .putLong("lng", lng.toBits())
-            .putLong("zoom", zoom.toBits())
-            .putLong("bearing", bearing.toBits())
-            .putLong("tilt", tilt.toBits())
-            .apply()
+        prefs.putLongs(
+            mapOf(
+                "lat" to lat.toBits(),
+                "lng" to lng.toBits(),
+                "zoom" to zoom.toBits(),
+                "bearing" to bearing.toBits(),
+                "tilt" to tilt.toBits(),
+            )
+        )
     }
 
     fun load(): SavedCamera? {

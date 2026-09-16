@@ -19,6 +19,8 @@ hiltWork = "1.2.0"
 javax-inject = { group = "javax.inject", name = "javax.inject", version = "1" }
 org-json = { group = "org.json", name = "json", version = "20260814" }
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+maplibre-geojson = { group = "org.maplibre.gl", name = "android-sdk-geojson", version = "6.0.1" }
+jsoup = { group = "org.jsoup", name = "jsoup", version = "1.23.2" }
 junit = { group = "junit", name = "junit", version = "4.13.2" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }

@@ -1,6 +1,6 @@
 package com.mappingsolution.data.fs
 
-import android.util.Log
+import com.mappingsolution.data.util.AppLog
 import com.mappingsolution.data.model.RasterLayer
 import com.mappingsolution.data.util.StorageManager
 import kotlinx.coroutines.CoroutineScope
@@ -30,7 +30,7 @@ class RasterLayerRepository @Inject constructor(
             try {
                 loadAll()
             } catch (e: Exception) {
-                Log.e("RasterLayerRepository", "Failed to load layers index", e)
+                AppLog.e("RasterLayerRepository", "Failed to load layers index", e)
             }
         }
     }
@@ -76,7 +76,7 @@ class RasterLayerRepository @Inject constructor(
             try {
                 fromJson(json.getJSONObject(i))
             } catch (e: Exception) {
-                Log.w("RasterLayerRepository", "Skipping malformed layer entry at index $i", e)
+                AppLog.w("RasterLayerRepository", "Skipping malformed layer entry at index $i", e)
                 null
             }
         }

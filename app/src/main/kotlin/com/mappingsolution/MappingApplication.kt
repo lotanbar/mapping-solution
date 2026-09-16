@@ -44,7 +44,9 @@ class MappingApplication : Application(), Configuration.Provider {
         super.onCreate()
         AppLog.sink = object : AppLog.Sink {
             override fun d(tag: String, message: String) { Log.d(tag, message) }
+            override fun i(tag: String, message: String) { Log.i(tag, message) }
             override fun w(tag: String, message: String, error: Throwable?) { Log.w(tag, message, error) }
+            override fun e(tag: String, message: String, error: Throwable?) { Log.e(tag, message, error) }
         }
 
         // MapLibre must be initialized before anything that touches its static context
@@ -83,7 +85,7 @@ class MappingApplication : Application(), Configuration.Provider {
                 .build()
         )
 
-        val storageManager = StorageManager(getExternalFilesDir(null) ?: filesDir)
+        val storageManager = StorageManager(getExternalFilesDir(null) ?: filesDir, cacheDir)
         val marker = File(storageManager.rootDir, ".migrated")
         if (!marker.exists()) {
             runBlocking(Dispatchers.IO) {

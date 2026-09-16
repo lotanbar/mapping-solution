@@ -1,6 +1,6 @@
 package com.mappingsolution.data.places
 
-import android.util.Log
+import com.mappingsolution.data.util.AppLog
 import com.mappingsolution.data.model.Poi
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -65,7 +65,7 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
         return runCatching {
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    Log.e("OsmApiService", "searchText HTTP ${response.code}")
+                    AppLog.e("OsmApiService", "searchText HTTP ${response.code}")
                     return@runCatching emptyList()
                 }
                 val jsonArray = org.json.JSONArray(response.body!!.string())
@@ -101,7 +101,7 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
                 }
             }
         }.getOrElse { e ->
-            Log.e("OsmApiService", "searchText failed", e)
+            AppLog.e("OsmApiService", "searchText failed", e)
             emptyList()
         }
     }
@@ -142,11 +142,11 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
 
         val body = "data=${java.net.URLEncoder.encode(query, "UTF-8")}".toRequestBody(formMediaType)
 
-        Log.d("OsmApiService", "fetchPois bbox=[S=${"%.4f".format(south)} W=${"%.4f".format(west)} N=${"%.4f".format(north)} E=${"%.4f".format(east)}]")
+        AppLog.d("OsmApiService", "fetchPois bbox=[S=${"%.4f".format(south)} W=${"%.4f".format(west)} N=${"%.4f".format(north)} E=${"%.4f".format(east)}]")
 
         val endpoints = endpointsForAttempt()
         if (endpoints.isEmpty()) {
-            Log.w("OsmApiService", "fetchPois: all Overpass endpoints are cooling down")
+            AppLog.w("OsmApiService", "fetchPois: all Overpass endpoints are cooling down")
             return null
         }
 
@@ -159,13 +159,13 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
                 .build()
 
             val reqStart = System.currentTimeMillis()
-            Log.d("OsmApiService", "Trying endpoint: $endpoint")
+            AppLog.d("OsmApiService", "Trying endpoint: $endpoint")
             val result = runCatching {
                 executeCancellable(request).use { response ->
                     val httpMs = System.currentTimeMillis() - reqStart
                     if (!response.isSuccessful) {
                         val responseBody = response.body?.string()
-                        Log.e("OsmApiService", "HTTP ${response.code} from $endpoint after ${httpMs}ms: $responseBody")
+                        AppLog.e("OsmApiService", "HTTP ${response.code} from $endpoint after ${httpMs}ms: $responseBody")
                         if (response.code == 429 || response.code in 500..599) {
                             val retryAfterMs = response.header("Retry-After")
                                 ?.toLongOrNull()
@@ -178,7 +178,7 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
                     val parseStart = System.currentTimeMillis()
                     val json = JSONObject(bodyStr)
                     val elements = json.optJSONArray("elements") ?: return@runCatching emptyList()
-                    Log.d("OsmApiService", "HTTP OK from $endpoint in ${httpMs}ms — ${elements.length()} elements (body ${bodyStr.length} bytes)")
+                    AppLog.d("OsmApiService", "HTTP OK from $endpoint in ${httpMs}ms — ${elements.length()} elements (body ${bodyStr.length} bytes)")
                     val now = System.currentTimeMillis()
                     val pois = (0 until elements.length()).mapNotNull { i ->
                         runCatching {
@@ -248,7 +248,7 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
                             )
                         }.getOrNull()
                     }
-                    Log.d("OsmApiService", "Parsed ${pois.size}/${elements.length()} POIs in ${System.currentTimeMillis() - parseStart}ms")
+                    AppLog.d("OsmApiService", "Parsed ${pois.size}/${elements.length()} POIs in ${System.currentTimeMillis() - parseStart}ms")
                     pois
                 }
             }
@@ -258,7 +258,7 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
                 if (e is IOException) {
                     coolDownEndpoint(endpoint, e.javaClass.simpleName)
                 }
-                Log.w("OsmApiService", "fetchPois failed for $endpoint after ${System.currentTimeMillis() - reqStart}ms: ${e.message}")
+                AppLog.w("OsmApiService", "fetchPois failed for $endpoint after ${System.currentTimeMillis() - reqStart}ms: ${e.message}")
                 null
             }
             // An empty result is valid in sparse regions and should be cached normally.
@@ -266,12 +266,12 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
             if (pois != null) {
                 markEndpointHealthy(endpoint)
                 if (endpoint != endpoints.first()) {
-                    Log.i("OsmApiService", "fetchPois succeeded via fallback: $endpoint")
+                    AppLog.i("OsmApiService", "fetchPois succeeded via fallback: $endpoint")
                 }
                 return pois
             }
         }
-        Log.e("OsmApiService", "fetchPois: all Overpass endpoints failed")
+        AppLog.e("OsmApiService", "fetchPois: all Overpass endpoints failed")
         return null
     }
 
@@ -320,7 +320,7 @@ class OsmApiService @Inject constructor(private val httpClient: OkHttpClient) {
                 lastHealthyAtMs = 0L
             }
         }
-        Log.w("OsmApiService", "Cooling down $endpoint for ${cooldownMs / 1_000L}s after $reason")
+        AppLog.w("OsmApiService", "Cooling down $endpoint for ${cooldownMs / 1_000L}s after $reason")
     }
 
     private fun markEndpointHealthy(endpoint: String) {

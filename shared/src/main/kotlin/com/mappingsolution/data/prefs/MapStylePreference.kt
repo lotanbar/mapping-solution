@@ -1,19 +1,18 @@
 package com.mappingsolution.data.prefs
 
-import android.content.Context
+import com.mappingsolution.data.util.KeyValueStore
 import com.mappingsolution.data.map.MapStyle
-import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class MapStylePreference @Inject constructor(
-    @ApplicationContext context: Context,
+    stores: KeyValueStore.Factory,
 ) {
-    private val prefs = context.getSharedPreferences("map_style", Context.MODE_PRIVATE)
+    private val prefs = stores.open("map_style")
 
     fun save(style: MapStyle) {
-        prefs.edit().putString("style", style.name).apply()
+        prefs.putString("style", style.name)
     }
 
     fun load(): MapStyle =

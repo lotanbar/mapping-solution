@@ -1,6 +1,6 @@
 package com.mappingsolution.data.places
 
-import android.util.Log
+import com.mappingsolution.data.util.AppLog
 import com.mappingsolution.data.model.Poi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -80,7 +80,7 @@ class OsmPoiRepository @Inject constructor(
             val memoryBounds = lastFetchedBounds
             if (memoryBounds?.covers(currentBounds) == true) {
                 _pois.value = fetchedPois.filter { it.lat in south..north && it.lng in west..east }
-                Log.d("OsmPoiRepo", "MEMORY HIT: ${_pois.value.size} POIs — no network fetch")
+                AppLog.d("OsmPoiRepo", "MEMORY HIT: ${_pois.value.size} POIs — no network fetch")
                 return@withContext true
             }
 
@@ -96,7 +96,7 @@ class OsmPoiRepository @Inject constructor(
             )
             val prevBounds = lastFetchedBounds
 
-            Log.d("OsmPoiRepo", "refreshForViewport zoom=%.1f bounds=[N=${"%.4f".format(north)} S=${"%.4f".format(south)} E=${"%.4f".format(east)} W=${"%.4f".format(west)}] cacheKey=$cacheKey prevBounds=$prevBounds".format(zoom))
+            AppLog.d("OsmPoiRepo", "refreshForViewport zoom=%.1f bounds=[N=${"%.4f".format(north)} S=${"%.4f".format(south)} E=${"%.4f".format(east)} W=${"%.4f".format(west)}] cacheKey=$cacheKey prevBounds=$prevBounds".format(zoom))
 
             val cacheStart = System.currentTimeMillis()
             // The center-keyed file is overwhelmingly the common hit. Trying it first avoids
@@ -105,11 +105,11 @@ class OsmPoiRepository @Inject constructor(
             val cached = keyedCache?.takeIf { it.covers(south, west, north, east) }
                 ?: cache.loadCovering(south, west, north, east)
                 ?: keyedCache
-            Log.d("OsmPoiRepo", "cache.load took ${System.currentTimeMillis() - cacheStart}ms — hit=${cached != null} covers=${cached?.covers(south, west, north, east)}")
+            AppLog.d("OsmPoiRepo", "cache.load took ${System.currentTimeMillis() - cacheStart}ms — hit=${cached != null} covers=${cached?.covers(south, west, north, east)}")
 
             if (cached != null && cached.covers(south, west, north, east)) {
                 val filtered = cached.pois.filter { it.lat in south..north && it.lng in west..east }
-                Log.d("OsmPoiRepo", "CACHE HIT: ${filtered.size} POIs in viewport (${cached.pois.size} in cache file) — total ${System.currentTimeMillis() - totalStart}ms")
+                AppLog.d("OsmPoiRepo", "CACHE HIT: ${filtered.size} POIs in viewport (${cached.pois.size} in cache file) — total ${System.currentTimeMillis() - totalStart}ms")
                 _pois.value = filtered
                 fetchedPois = cached.pois
                 lastFetchedBounds = FetchedBounds(
@@ -135,13 +135,13 @@ class OsmPoiRepository @Inject constructor(
             // detail page stay inside memory instead of immediately hitting Overpass again.
             val fetchBounds = currentBounds.expanded(0.20)
             val strips = computeNewStrips(fetchBounds, prevBounds)
-            Log.d("OsmPoiRepo", "computeNewStrips → ${strips.size} strip(s): ${strips.map { "[N=${"%.4f".format(it.north)} S=${"%.4f".format(it.south)} E=${"%.4f".format(it.east)} W=${"%.4f".format(it.west)}]" }}")
+            AppLog.d("OsmPoiRepo", "computeNewStrips → ${strips.size} strip(s): ${strips.map { "[N=${"%.4f".format(it.north)} S=${"%.4f".format(it.south)} E=${"%.4f".format(it.east)} W=${"%.4f".format(it.west)}]" }}")
 
             if (strips.isEmpty()) {
                 val cachedPois = cached?.pois
                     ?.filter { it.lat in south..north && it.lng in west..east }
                     ?: emptyList()
-                Log.d("OsmPoiRepo", "No new strips needed; using ${cachedPois.size} cached POIs — total ${System.currentTimeMillis() - totalStart}ms")
+                AppLog.d("OsmPoiRepo", "No new strips needed; using ${cachedPois.size} cached POIs — total ${System.currentTimeMillis() - totalStart}ms")
                 _pois.value = cachedPois
                 lastFetchedBounds = currentBounds
                 return@withContext true
@@ -164,10 +164,10 @@ class OsmPoiRepository @Inject constructor(
                             )
                         }.getOrElse { e ->
                             if (e is CancellationException) throw e
-                            Log.e("OsmPoiRepo", "Strip $idx fetch failed", e)
+                            AppLog.e("OsmPoiRepo", "Strip $idx fetch failed", e)
                             null
                         }
-                        Log.d("OsmPoiRepo", "Strip $idx returned ${result?.size ?: "failure"} in ${System.currentTimeMillis() - stripStart}ms")
+                        AppLog.d("OsmPoiRepo", "Strip $idx returned ${result?.size ?: "failure"} in ${System.currentTimeMillis() - stripStart}ms")
 
                         // Publish each completed strip instead of keeping the map empty until the
                         // slowest request finishes.
@@ -189,11 +189,11 @@ class OsmPoiRepository @Inject constructor(
             // later; most importantly, never cache the failed viewport as a valid empty result.
             if (stripResults.any { it == null }) {
                 fetchedPois = basePoisById.values.toList()
-                Log.w("OsmPoiRepo", "OSM fetch incomplete; preserving existing POIs and skipping cache")
+                AppLog.w("OsmPoiRepo", "OSM fetch incomplete; preserving existing POIs and skipping cache")
                 return@withContext false
             }
             val allStripPois = stripResults.filterNotNull().flatten()
-            Log.d("OsmPoiRepo", "All ${strips.size} strip(s) fetched in ${System.currentTimeMillis() - fetchStart}ms — total raw POIs: ${allStripPois.size}")
+            AppLog.d("OsmPoiRepo", "All ${strips.size} strip(s) fetched in ${System.currentTimeMillis() - fetchStart}ms — total raw POIs: ${allStripPois.size}")
 
             // Deduplicate: cached + existing in-viewport + freshly fetched strip POIs.
             val combined = (
@@ -211,12 +211,12 @@ class OsmPoiRepository @Inject constructor(
                 fetchBounds.north,
                 fetchBounds.east,
             )
-            Log.d("OsmPoiRepo", "cache.store took ${System.currentTimeMillis() - cacheWriteStart}ms — stored ${combined.size} POIs")
+            AppLog.d("OsmPoiRepo", "cache.store took ${System.currentTimeMillis() - cacheWriteStart}ms — stored ${combined.size} POIs")
 
             val inViewport = combined.filter { it.lat in south..north && it.lng in west..east }
             _pois.value = inViewport
             fetchedPois = combined
-            Log.d("OsmPoiRepo", "refreshForViewport DONE — ${inViewport.size} POIs shown, total time ${System.currentTimeMillis() - totalStart}ms")
+            AppLog.d("OsmPoiRepo", "refreshForViewport DONE — ${inViewport.size} POIs shown, total time ${System.currentTimeMillis() - totalStart}ms")
             lastFetchedBounds = fetchBounds
             true
         } finally {
@@ -242,7 +242,7 @@ class OsmPoiRepository @Inject constructor(
     /** Called once on app launch to purge stale cache files. Does not refetch. */
     suspend fun evictStaleCacheOnLaunch() = withContext(Dispatchers.IO) {
         runCatching { cache.evictStale() }
-            .onFailure { Log.w("OsmPoiRepo", "Cache eviction failed", it) }
+            .onFailure { AppLog.w("OsmPoiRepo", "Cache eviction failed", it) }
     }
 }
 

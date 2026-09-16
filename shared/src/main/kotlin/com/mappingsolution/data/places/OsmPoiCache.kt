@@ -1,9 +1,8 @@
 package com.mappingsolution.data.places
 
-import android.content.Context
-import android.util.Log
+import com.mappingsolution.data.util.StorageManager
+import com.mappingsolution.data.util.AppLog
 import com.mappingsolution.data.model.Poi
-import dagger.hilt.android.qualifiers.ApplicationContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -25,9 +24,9 @@ data class OsmCachedEntry(
 }
 
 @Singleton
-class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
+class OsmPoiCache @Inject constructor(storageManager: StorageManager) {
 
-    private val cacheDir = File(context.cacheDir, "osm_poi_cache").also { it.mkdirs() }
+    private val cacheDir = storageManager.getCacheDir("osm_poi_cache")
 
     private fun cacheFile(key: String) = File(cacheDir, "osm_$key.json")
 
@@ -67,7 +66,7 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
             }
             OsmCachedEntry(pois, south, west, north, east)
         }.getOrElse {
-            Log.w("OsmPoiCache", "Failed to read cache file ${file.name}", it)
+            AppLog.w("OsmPoiCache", "Failed to read cache file ${file.name}", it)
             null
         }
     }
@@ -87,7 +86,7 @@ class OsmPoiCache @Inject constructor(@ApplicationContext context: Context) {
                 put("pois", arr)
             }
             cacheFile(key).writeText(json.toString())
-        }.onFailure { Log.w("OsmPoiCache", "Failed to write cache for $key", it) }
+        }.onFailure { AppLog.w("OsmPoiCache", "Failed to write cache for $key", it) }
     }
 
     /** Deletes all cache files older than [OSM_CACHE_TTL_MS] or in an old format. */

@@ -1,12 +1,11 @@
 package com.mappingsolution.data.fs
 
-import android.content.Context
-import android.content.SharedPreferences
+import com.mappingsolution.data.util.KeyValueStore
+import com.mappingsolution.data.util.AppLog
 import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.GroupType
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.data.util.StorageManager
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -29,13 +28,11 @@ sealed class DuplicateFieldError(message: String) : Exception(message) {
 
 @Singleton
 class GroupFileRepository @Inject constructor(
-    @ApplicationContext private val context: Context,
     private val storageManager: StorageManager,
+    stores: KeyValueStore.Factory,
 ) {
 
-    private val prefs: SharedPreferences by lazy {
-        context.getSharedPreferences("group_visibility", Context.MODE_PRIVATE)
-    }
+    private val prefs: KeyValueStore by lazy { stores.open("group_visibility") }
 
     // ── Hardcoded OSM system group ──────────────────────────────────────────
     // These are never written to the filesystem; visibility is stored in SharedPreferences.
@@ -61,7 +58,7 @@ class GroupFileRepository @Inject constructor(
             val trace = Thread.currentThread().stackTrace
                 .drop(1).take(8)
                 .joinToString("\n    ") { it.toString() }
-            android.util.Log.w("GroupFileRepo", "isBulk LOST for IDs $lostBulk\n    $trace")
+            AppLog.w("GroupFileRepo", "isBulk LOST for IDs $lostBulk\n    $trace")
         }
         _groups.value = newValue
     }
@@ -72,9 +69,9 @@ class GroupFileRepository @Inject constructor(
                 loadAll()
                 cleanupStaleImports()
             } catch (e: java.io.IOException) {
-                android.util.Log.e("GroupFileRepository", "Storage not accessible on init; permission may be missing", e)
+                AppLog.e("GroupFileRepository", "Storage not accessible on init; permission may be missing", e)
             } catch (e: SecurityException) {
-                android.util.Log.e("GroupFileRepository", "Storage permission denied on init", e)
+                AppLog.e("GroupFileRepository", "Storage permission denied on init", e)
             }
         }
     }
@@ -99,7 +96,7 @@ class GroupFileRepository @Inject constructor(
     private fun cleanupStaleImports() {
         val stale = _groups.value.filter { it.isImported && !it.importComplete && it.isBulk }
         if (stale.isEmpty()) return
-        android.util.Log.i("GroupFileRepository", "Cleaning up ${stale.size} stale import(s): ${stale.map { it.name }}")
+        AppLog.i("GroupFileRepository", "Cleaning up ${stale.size} stale import(s): ${stale.map { it.name }}")
         for (g in stale) {
             storageManager.deletePoiFolder(g.name, g.id)
             storageManager.getBulkManifestFile(g.name, g.id).delete()
@@ -124,10 +121,10 @@ class GroupFileRepository @Inject constructor(
             it.name.trim().equals(trimmed, ignoreCase = true) && it.isImported
         }
         if (existing == null) {
-            android.util.Log.i("GroupFileRepo", "prepareForReimport('$trimmed'): no match — available imported groups: ${_groups.value.filter { it.isImported }.map { "'${it.name}'" }}")
+            AppLog.i("GroupFileRepo", "prepareForReimport('$trimmed'): no match — available imported groups: ${_groups.value.filter { it.isImported }.map { "'${it.name}'" }}")
             return@withContext null
         }
-        android.util.Log.i("GroupFileRepo", "prepareForReimport('$trimmed'): found id=${existing.id} storedName='${existing.name}'")
+        AppLog.i("GroupFileRepo", "prepareForReimport('$trimmed'): found id=${existing.id} storedName='${existing.name}'")
         val updated = existing.copy(importComplete = false, updatedAt = System.currentTimeMillis())
         writeGroup(updated)
         setGroups(_groups.value.map { if (it.id == existing.id) updated else it })
@@ -266,7 +263,7 @@ class GroupFileRepository @Inject constructor(
     /** Toggles the isVisible flag without running duplicate validation. Safe to call for any group. */
     suspend fun setVisibility(groupId: String, isVisible: Boolean) = withContext(Dispatchers.IO) {
         if (groupId == OSM_POI_GROUP_ID) {
-            prefs.edit().putBoolean(groupId, isVisible).apply()
+            prefs.putBoolean(groupId, isVisible)
             setGroups(_groups.value.map {
                 if (it.id == groupId) it.copy(isVisible = isVisible) else it
             })

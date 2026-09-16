@@ -1,11 +1,11 @@
 package com.mappingsolution.data.places
 
-import android.content.Context
-import android.text.Html
-import android.util.Log
-import com.mappingsolution.BuildConfig
+import org.jsoup.parser.Parser
+import org.jsoup.Jsoup
+import com.mappingsolution.data.util.StorageManager
+import com.mappingsolution.data.util.ApiKeys
+import com.mappingsolution.data.util.AppLog
 import com.mappingsolution.data.model.Poi
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -73,17 +73,18 @@ data class WikimediaContent(
  */
 @Singleton
 class WikimediaRepository @Inject constructor(
-    @ApplicationContext context: Context,
+    storageManager: StorageManager,
     private val httpClient: OkHttpClient,
+    private val apiKeys: ApiKeys,
 ) {
-    private val cacheDir = File(context.cacheDir, "wikimedia_poi_cache").also { it.mkdirs() }
+    private val cacheDir = storageManager.getCacheDir("wikimedia_poi_cache")
     private val memoryCache = ConcurrentHashMap<String, CacheEntry>()
     private val resolveMutexes = ConcurrentHashMap<String, Mutex>()
     private val hostThrottles = ConcurrentHashMap<String, HostThrottle>()
 
     suspend fun getContent(poi: Poi): WikimediaContent? = withContext(Dispatchers.IO) {
         val searchNames = poiSearchNames(poi)
-        val cacheKey = "v$CACHE_VERSION|mapillary=${BuildConfig.MAPILLARY_ACCESS_TOKEN.isNotBlank()}|" +
+        val cacheKey = "v$CACHE_VERSION|mapillary=${apiKeys.mapillary.isNotBlank()}|" +
             "${poi.id}|${poi.wikiRef.orEmpty()}|" +
             poi.imageRefs.joinToString(";") + "|" + searchNames.joinToString(";") +
             "|${"%.5f".format(poi.lat)},${"%.5f".format(poi.lng)}"
@@ -136,7 +137,7 @@ class WikimediaRepository @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to resolve Wikimedia content for ${poi.name}", e)
+                AppLog.w(TAG, "Failed to resolve Wikimedia content for ${poi.name}", e)
                 return@withLock null
             }
             val cached = resolved ?: WikimediaContent()
@@ -162,7 +163,7 @@ class WikimediaRepository @Inject constructor(
             throw e
         } catch (e: Exception) {
             hadFailure = true
-            Log.w(TAG, "Image provider failed; continuing", e)
+            AppLog.w(TAG, "Image provider failed; continuing", e)
             null
         }
 
@@ -215,10 +216,7 @@ class WikimediaRepository @Inject constructor(
             source.request(WEBSITE_HTML_LIMIT_BYTES)
             val html = source.readUtf8(minOf(source.buffer.size, WEBSITE_HTML_LIMIT_BYTES))
             val imageRef = websitePreviewImage(html) ?: return@use null
-            val imageUrl = response.request.url.resolve(Html.fromHtml(
-                imageRef,
-                Html.FROM_HTML_MODE_LEGACY,
-            ).toString())?.toString() ?: return@use null
+            val imageUrl = response.request.url.resolve(Parser.unescapeEntities(imageRef, true))?.toString() ?: return@use null
             WikimediaContent(
                 imageUrl = imageUrl,
                 imageSourceUrl = response.request.url.toString(),
@@ -290,7 +288,7 @@ class WikimediaRepository @Inject constructor(
     }
 
     private suspend fun resolveMapillaryId(rawId: String): WikimediaContent? {
-        val token = BuildConfig.MAPILLARY_ACCESS_TOKEN.trim()
+        val token = apiKeys.mapillary.trim()
         if (token.isBlank()) return null
         val id = mapillaryImageId(rawId) ?: return null
         val url = "https://graph.mapillary.com/$id".toHttpUrl().newBuilder()
@@ -1173,7 +1171,7 @@ class WikimediaRepository @Inject constructor(
                 }
             }
             cacheFile(ref).writeText(json.toString())
-        }.onFailure { Log.w(TAG, "Failed to cache Wikimedia content", it) }
+        }.onFailure { AppLog.w(TAG, "Failed to cache Wikimedia content", it) }
     }
 
     private data class CacheEntry(
@@ -1195,7 +1193,7 @@ class WikimediaRepository @Inject constructor(
         this?.optJSONObject(key)?.optString("value")?.ifBlank { null }
 
     private fun String.toPlainText(): String =
-        Html.fromHtml(this, Html.FROM_HTML_MODE_LEGACY).toString().trim()
+        Jsoup.parse(this).text().trim()
 
     private fun JSONObject.nullableString(key: String): String? =
         optString(key).ifBlank { null }
