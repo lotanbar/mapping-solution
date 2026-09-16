@@ -176,32 +176,38 @@ fun ColorPickerDialog(
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-internal fun parseHex(hex: String): Color {
-    return try {
-        val argb = android.graphics.Color.parseColor(hex)
-        Color(argb)
-    } catch (_: Exception) {
-        Color(0xFF2196F3)
-    }
-}
+fun parseHex(hex: String): Color =
+    parseArgb(hex)?.let { Color(it) } ?: Color(0xFF2196F3)
 
 internal fun hexToHsv(hex: String): FloatArray {
-    return try {
-        val argb = android.graphics.Color.parseColor(hex)
-        val hsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(argb, hsv)
-        hsv
-    } catch (_: Exception) {
-        floatArrayOf(210f, 0.86f, 0.95f)
-    }
+    val argb = parseArgb(hex) ?: return floatArrayOf(210f, 0.86f, 0.95f)
+    val r = (argb shr 16 and 0xFF) / 255f
+    val g = (argb shr 8 and 0xFF) / 255f
+    val b = (argb and 0xFF) / 255f
+    val max = maxOf(r, g, b)
+    val delta = max - minOf(r, g, b)
+    val hue = when {
+        delta == 0f -> 0f
+        max == r -> 60f * (((g - b) / delta) % 6f)
+        max == g -> 60f * (((b - r) / delta) + 2f)
+        else -> 60f * (((r - g) / delta) + 4f)
+    }.let { if (it < 0f) it + 360f else it }
+    return floatArrayOf(hue, if (max == 0f) 0f else delta / max, max)
 }
 
 internal fun hsvToHex(hue: Float, sat: Float, bri: Float): String {
-    val argb = android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, bri))
-    return String.format(
-        "#FF%02X%02X%02X",
-        android.graphics.Color.red(argb),
-        android.graphics.Color.green(argb),
-        android.graphics.Color.blue(argb),
-    )
+    val color = Color.hsv(hue.coerceIn(0f, 360f), sat.coerceIn(0f, 1f), bri.coerceIn(0f, 1f))
+    fun channel(value: Float) = (value * 255f + 0.5f).toInt().coerceIn(0, 255)
+    return "#FF%02X%02X%02X".format(channel(color.red), channel(color.green), channel(color.blue))
+}
+
+/** Parses `#RRGGBB` or `#AARRGGBB` into an ARGB int, or null when malformed. */
+private fun parseArgb(hex: String): Int? {
+    val digits = hex.removePrefix("#")
+    val value = digits.toLongOrNull(16) ?: return null
+    return when (digits.length) {
+        6 -> (0xFF000000 or value).toInt()
+        8 -> value.toInt()
+        else -> null
+    }
 }

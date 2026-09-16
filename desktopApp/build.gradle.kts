@@ -26,6 +26,7 @@ val mapRuntime = when {
 
 dependencies {
     implementation(project(":shared"))
+    implementation(project(":sharedUi"))
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
     implementation(libs.maplibre.compose)

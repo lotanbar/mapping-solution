@@ -14,7 +14,7 @@ val localProperties = Properties().apply {
 
 android {
     namespace = "com.mappingsolution"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.mappingsolution"
@@ -61,6 +61,7 @@ kotlin {
 
 dependencies {
     implementation(project(":shared"))
+    implementation(project(":sharedUi"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
