@@ -30,6 +30,7 @@ import com.mappingsolution.data.map.MapStyle
 import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.model.Route
 import com.mappingsolution.data.model.RoutePoint
+import com.mappingsolution.data.util.AppLog
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
@@ -56,6 +57,8 @@ import org.maplibre.compose.sources.rememberGeoJsonSource
 import org.maplibre.compose.sources.rememberRasterDemTileSource
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.spatialk.geojson.Position
+
+private const val TAG = "MapScreen"
 
 private sealed interface Selection {
     data class PoiSelection(val poi: Poi) : Selection
@@ -146,6 +149,15 @@ internal fun MapScreen(container: AppContainer) {
         )
     }
 
+    LaunchedEffect(selection) {
+        when (val selected = selection) {
+            is Selection.PoiSelection -> AppLog.d(TAG, "Selected POI '${selected.poi.name}'")
+            is Selection.RouteSelection -> AppLog.d(TAG, "Selected route '${selected.route.name}'")
+            null -> Unit
+        }
+    }
+    LaunchedEffect(style) { AppLog.d(TAG, "Map style $style") }
+
     LaunchedEffect(mapState) {
         snapshotFlow { mapState.cameraPosition }.drop(1).debounce(1_000).collect { camera ->
             container.viewportPreference.save(
@@ -156,6 +168,18 @@ internal fun MapScreen(container: AppContainer) {
                 tilt = camera.tilt,
             )
         }
+    }
+
+    DevAutomation.featureLocator = { kind, name ->
+        val position = when (kind) {
+            "poi" -> pois.find { it.name == name }?.let { Position(it.lng, it.lat) }
+            "route" -> routes.find { it.name == name }
+                ?.let { routePoints[it.id] }
+                ?.let { points -> points[points.size / 2] }
+                ?.let { Position(it.lng, it.lat) }
+            else -> null
+        }
+        position?.let(mapState::screenLocationFromPosition)
     }
 
     Box(Modifier.fillMaxSize()) {
