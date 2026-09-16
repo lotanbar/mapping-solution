@@ -1,8 +1,8 @@
 [versions]
-agp = "8.7.3"
-kotlin = "2.0.21"
-ksp = "2.0.21-1.0.27"
-hilt = "2.51.1"
+agp = "9.4.0"
+kotlin = "2.4.20"
+ksp = "2.3.12"
+hilt = "2.60.1"
 hiltNavigationCompose = "1.2.0"
 composeBom = "2024.12.01"
 activityCompose = "1.9.3"
@@ -40,7 +40,6 @@ androidx-hilt-compiler = { group = "androidx.hilt", name = "hilt-compiler", vers
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
