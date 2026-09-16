@@ -147,7 +147,7 @@ fun MainScreen(
     LaunchedEffect(incompleteRoutes, recordingState) {
         if (recordingState is RecordingState.Idle && recoveryRoute == null) {
             val candidate = incompleteRoutes.firstOrNull {
-                it.id !in dismissedIncompleteIds
+                it.id !in dismissedIncompleteIds && viewModel.isStillIncomplete(it.id)
             }
             if (candidate != null) recoveryRoute = candidate
         }

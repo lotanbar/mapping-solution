@@ -69,6 +69,10 @@ class MainViewModel @Inject constructor(
         .map { routes -> routes.filter { !it.didUserTapStop } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** Reads the repository directly: [incompleteRoutes] can lag one emission behind a just-finished stop. */
+    suspend fun isStillIncomplete(routeId: String): Boolean =
+        routeRepository.getById(routeId)?.didUserTapStop == false
+
     /** Points for all visible completed routes, keyed by route ID. Used to render polylines on the map. */
     val routePoints: StateFlow<Map<String, List<RoutePoint>>> = routeRepository.observeAll()
         .flatMapLatest { routes ->
