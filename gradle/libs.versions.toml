@@ -1,6 +1,8 @@
 [versions]
 agp = "9.4.0"
 kotlin = "2.4.20"
+composeMultiplatform = "1.12.0"
+maplibreCompose = "0.17.0"
 ksp = "2.3.12"
 hilt = "2.60.1"
 hiltNavigationCompose = "1.2.0"
@@ -16,8 +18,10 @@ workManager = "2.9.1"
 hiltWork = "1.2.0"
 
 [libraries]
+maplibre-compose = { group = "org.maplibre.compose", name = "maplibre-compose", version.ref = "maplibreCompose" }
 javax-inject = { group = "javax.inject", name = "javax.inject", version = "1" }
 org-json = { group = "org.json", name = "json", version = "20260814" }
+kotlinx-coroutines-swing = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-swing", version.ref = "coroutines" }
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
 maplibre-geojson = { group = "org.maplibre.gl", name = "android-sdk-geojson", version = "6.0.1" }
 jsoup = { group = "org.jsoup", name = "jsoup", version = "1.23.2" }
@@ -47,6 +51,7 @@ androidx-hilt-work = { group = "androidx.hilt", name = "hilt-work", version.ref 
 androidx-hilt-compiler = { group = "androidx.hilt", name = "hilt-compiler", version.ref = "hiltWork" }
 
 [plugins]
+compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
