@@ -1,12 +1,8 @@
 package com.mappingsolution.data.fs
 
-import android.content.Context
-import android.net.Uri
-import android.util.Xml
-import androidx.core.content.FileProvider
+import org.xmlpull.v1.XmlPullParserFactory
 import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.model.Route
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -14,26 +10,22 @@ import org.xmlpull.v1.XmlSerializer
 import java.io.File
 import java.io.FileOutputStream
 import java.time.Instant
-import javax.inject.Inject
-import javax.inject.Singleton
 
-@Singleton
-class ExportRepository @Inject constructor(
-    @ApplicationContext private val context: Context,
+/** Writes GPX exports into [exportsDir]; each platform decides how to share the resulting file. */
+class ExportRepository(
+    private val exportsDir: File,
     private val poiRepository: PoiFileRepository,
     private val routeRepository: RouteFileRepository,
 ) {
-    private val exportsDir: File
-        get() = File(context.filesDir, "exports").also { it.mkdirs() }
 
     /** Export all POIs belonging to the given group IDs. */
-    suspend fun exportGroups(groupIds: Set<String>): Uri? {
+    suspend fun exportGroups(groupIds: Set<String>): File? {
         val pois = poiRepository.observeAll().first().filter { it.groupId in groupIds }
         return buildGpx(pois, emptyList())
     }
 
     /** Export the specific POIs and/or Routes identified by [rowIds]. */
-    suspend fun exportRows(rowIds: Set<String>): Uri? {
+    suspend fun exportRows(rowIds: Set<String>): File? {
         val pois = poiRepository.observeAll().first().filter { it.id in rowIds }
         val routes = routeRepository.observeAll().first().filter { it.id in rowIds }
         return buildGpx(pois, routes)
@@ -41,15 +33,16 @@ class ExportRepository @Inject constructor(
 
     // ── GPX builder ───────────────────────────────────────────────────────────
 
-    private suspend fun buildGpx(pois: List<Poi>, routes: List<Route>): Uri? = withContext(Dispatchers.IO) {
+    private suspend fun buildGpx(pois: List<Poi>, routes: List<Route>): File? = withContext(Dispatchers.IO) {
         if (pois.isEmpty() && routes.isEmpty()) return@withContext null
+        exportsDir.mkdirs()
 
         // Remove stale export files before writing a new one
         exportsDir.listFiles()?.forEach { it.delete() }
 
         val file = File(exportsDir, "export_${System.currentTimeMillis()}.gpx")
         FileOutputStream(file).use { fos ->
-            val xs: XmlSerializer = Xml.newSerializer()
+            val xs: XmlSerializer = XmlPullParserFactory.newInstance().newSerializer()
             xs.setOutput(fos, "UTF-8")
             xs.startDocument("UTF-8", true)
 
@@ -91,7 +84,7 @@ class ExportRepository @Inject constructor(
             xs.endDocument()
         }
 
-        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        file
     }
 }
 

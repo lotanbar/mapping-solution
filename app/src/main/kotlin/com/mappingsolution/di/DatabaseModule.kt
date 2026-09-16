@@ -1,5 +1,7 @@
 package com.mappingsolution.di
 
+import java.io.File
+import com.mappingsolution.data.fs.ExportRepository
 import android.content.Context
 import com.mappingsolution.data.fs.GroupFileRepository
 import com.mappingsolution.data.fs.PlanFileRepository
@@ -64,4 +66,12 @@ object DatabaseModule {
     @Singleton
     fun provideRasterLayerRepository(storageManager: StorageManager): com.mappingsolution.data.fs.RasterLayerRepository =
         com.mappingsolution.data.fs.RasterLayerRepository(storageManager)
+
+    @Provides
+    @Singleton
+    fun provideExportRepository(
+        @ApplicationContext context: Context,
+        poiRepository: PoiFileRepository,
+        routeRepository: RouteFileRepository,
+    ): ExportRepository = ExportRepository(File(context.filesDir, "exports"), poiRepository, routeRepository)
 }

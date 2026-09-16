@@ -15,7 +15,10 @@ dependencies {
     implementation(libs.jsoup)
     // Android ships org.json in the platform; the desktop app adds it at runtime.
     compileOnly(libs.org.json)
+    // Same for the XmlPull API (desktop runtime: kxml2).
+    compileOnly(libs.xmlpull)
 
     testImplementation(libs.junit)
     testImplementation(libs.org.json)
+    testImplementation(libs.kxml2)
 }

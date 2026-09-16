@@ -1,5 +1,7 @@
 package com.mappingsolution.ui.library
 
+import java.io.File
+import androidx.core.content.FileProvider
 import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
@@ -739,7 +741,7 @@ class LibraryViewModel @Inject constructor(
     fun exportSelectedGroups() {
         val ids = (_selectionMode.value as? LibrarySelectionMode.GroupSelection)?.selectedIds ?: return
         viewModelScope.launch {
-            val uri = exportRepository.exportGroups(ids) ?: return@launch
+            val uri = exportRepository.exportGroups(ids)?.let(::shareableUri) ?: return@launch
             _exportUri.tryEmit(uri)
         }
     }
@@ -747,8 +749,11 @@ class LibraryViewModel @Inject constructor(
     fun exportSelectedRows() {
         val ids = (_selectionMode.value as? LibrarySelectionMode.RowSelection)?.selectedIds ?: return
         viewModelScope.launch {
-            val uri = exportRepository.exportRows(ids) ?: return@launch
+            val uri = exportRepository.exportRows(ids)?.let(::shareableUri) ?: return@launch
             _exportUri.tryEmit(uri)
         }
     }
+
+    private fun shareableUri(file: File): Uri =
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 }

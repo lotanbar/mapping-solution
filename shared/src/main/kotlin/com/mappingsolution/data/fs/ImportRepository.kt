@@ -1,12 +1,10 @@
 package com.mappingsolution.data.fs
 
-import android.content.Context
-import android.util.Log
+import com.mappingsolution.data.util.AppLog
 import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.model.Route
 import com.mappingsolution.data.model.RoutePoint
 import com.mappingsolution.data.util.StorageManager
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
@@ -32,7 +30,6 @@ data class ImportResult(
 
 @Singleton
 class ImportRepository @Inject constructor(
-    @ApplicationContext private val context: Context,
     private val groupRepository: GroupFileRepository,
     private val poiRepository: PoiFileRepository,
     private val routeRepository: RouteFileRepository,
@@ -97,8 +94,8 @@ class ImportRepository @Inject constructor(
                     validationErrors.add("$rowLabel: longitude ${poi.lng} out of range [-180, 180]")
             }
             if (validationErrors.isNotEmpty()) {
-                Log.w("ImportRepository", "Validation failed: ${validationErrors.size} error(s)")
-                validationErrors.forEach { Log.w("ImportRepository", "  • $it") }
+                AppLog.w("ImportRepository", "Validation failed: ${validationErrors.size} error(s)")
+                validationErrors.forEach { AppLog.w("ImportRepository", "  • $it") }
                 return@withContext ImportResult(
                     filesSkipped = skipped,
                     errors = errors,
@@ -192,8 +189,8 @@ class ImportRepository @Inject constructor(
                     validationErrors.add("$rowLabel: longitude ${poi.lng} out of range [-180, 180]")
             }
             if (validationErrors.isNotEmpty()) {
-                Log.w("ImportRepository", "Single-file validation failed: ${validationErrors.size} error(s)")
-                validationErrors.forEach { Log.w("ImportRepository", "  • $it") }
+                AppLog.w("ImportRepository", "Single-file validation failed: ${validationErrors.size} error(s)")
+                validationErrors.forEach { AppLog.w("ImportRepository", "  • $it") }
                 return@withContext ImportResult(
                     filesSkipped = skipped,
                     errors = errors,
@@ -343,7 +340,7 @@ class ImportRepository @Inject constructor(
         sourceZipFile: File? = null,
     ) {
         val reimportInfo = groupRepository.prepareForReimport(groupName)
-        Log.i("ImportRepository", "saveImport: groupName='$groupName' reimport=${reimportInfo != null} pois=${resolvedPois.size} zipBacked=${sourceZipFile != null}")
+        AppLog.i("ImportRepository", "saveImport: groupName='$groupName' reimport=${reimportInfo != null} pois=${resolvedPois.size} zipBacked=${sourceZipFile != null}")
 
         if (reimportInfo != null) {
             // ── SMART RE-IMPORT ──────────────────────────────────────────────
@@ -355,7 +352,7 @@ class ImportRepository @Inject constructor(
             val existingLineCount = if (bulkFile.isFile) {
                 bulkFile.bufferedReader().use { r -> var n = 0; while (r.readLine() != null) n++; n }
             } else 0
-            Log.i("ImportRepository", "Re-import: existingLines=$existingLineCount bulkFile=${bulkFile.path}")
+            AppLog.i("ImportRepository", "Re-import: existingLines=$existingLineCount bulkFile=${bulkFile.path}")
 
             // Load existing POIs, keyed by identity (name|lat|lng)
             val existingByKey = HashMap<String, Poi>(existingLineCount * 2)
@@ -403,7 +400,7 @@ class ImportRepository @Inject constructor(
             val incomingKeys = resolvedPois.mapTo(HashSet(resolvedPois.size * 2)) { "${it.name}|${it.lat}|${it.lng}" }
             val removedPois = existingByKey.values.filter { "${it.name}|${it.lat}|${it.lng}" !in incomingKeys }
 
-            Log.i("ImportRepository", "Diff: added=${addedPoiIds.size} removed=${removedPois.size} updatedImages=${updatedWithImageChanges.size} unchanged=${resolvedPois.size - addedPoiIds.size - updatedWithImageChanges.size}")
+            AppLog.i("ImportRepository", "Diff: added=${addedPoiIds.size} removed=${removedPois.size} updatedImages=${updatedWithImageChanges.size} unchanged=${resolvedPois.size - addedPoiIds.size - updatedWithImageChanges.size}")
 
             // Write new JSONL
             val total = poisToWrite.size
@@ -436,10 +433,10 @@ class ImportRepository @Inject constructor(
                     it.addAll(updatedWithImageChanges)
                 }
                 if (toSync.isEmpty()) {
-                    Log.i("ImportRepository", "Images up to date — nothing to sync")
+                    AppLog.i("ImportRepository", "Images up to date — nothing to sync")
                     onProgress("Images up to date", 0, 0)
                 } else {
-                    Log.i("ImportRepository", "Syncing images for ${toSync.size} POIs (${addedPoiIds.size} added, ${updatedWithImageChanges.size} updated)")
+                    AppLog.i("ImportRepository", "Syncing images for ${toSync.size} POIs (${addedPoiIds.size} added, ${updatedWithImageChanges.size} updated)")
                     onProgress("Syncing images…", 0, toSync.size)
                     var syncCount = 0
                     for (poi in toSync) {
@@ -452,7 +449,7 @@ class ImportRepository @Inject constructor(
                                         ?: resolveImageFile(imagesDir, filename, imageIndex)
                                         ?: continue
                                     runCatching { srcFile.copyTo(File(destDir, srcFile.name), overwrite = true) }
-                                        .onFailure { Log.w("ImportRepository", "Failed to copy '${srcFile.name}': ${it.message}") }
+                                        .onFailure { AppLog.w("ImportRepository", "Failed to copy '${srcFile.name}': ${it.message}") }
                                 }
                             } else {
                                 syncPoiImages(imagesDir, destDir, poi.mediaPaths, imageIndex)
@@ -469,7 +466,7 @@ class ImportRepository @Inject constructor(
 
         } else {
             // ── FIRST IMPORT ────────────────────────────────────────────────
-            Log.i("ImportRepository", "First import for group='$groupName', pois=${resolvedPois.size}")
+            AppLog.i("ImportRepository", "First import for group='$groupName', pois=${resolvedPois.size}")
             val groupId = groupRepository.purgeAndCreateForImport(groupName, poiRepository) { phase, done, total ->
                 onProgress(phase, done, total)
             }
@@ -495,7 +492,7 @@ class ImportRepository @Inject constructor(
             // Zip-backed imports serve images on demand — no file copies needed.
             if (sourceZipFile == null && imagesDir != null) {
                 val poisWithImages = resolvedPois.filter { it.mediaPaths.isNotEmpty() }
-                Log.i("ImportRepository", "Copying images for ${poisWithImages.size} POIs")
+                AppLog.i("ImportRepository", "Copying images for ${poisWithImages.size} POIs")
                 onProgress("Copying images…", 0, poisWithImages.size)
                 var doneCount = 0
                 for (poi in poisWithImages) {
@@ -506,7 +503,7 @@ class ImportRepository @Inject constructor(
                             ?: resolveImageFile(imagesDir, filename, imageIndex)
                             ?: continue
                         runCatching { srcFile.copyTo(File(destDir, srcFile.name), overwrite = true) }
-                            .onFailure { Log.w("ImportRepository", "Failed to copy image '${srcFile.name}': ${it.message}") }
+                            .onFailure { AppLog.w("ImportRepository", "Failed to copy image '${srcFile.name}': ${it.message}") }
                     }
                     doneCount++
                     onProgress("Copying images…", doneCount, poisWithImages.size)
@@ -525,7 +522,7 @@ class ImportRepository @Inject constructor(
         groupId: String,
     ): String {
         val destZip = storageManager.getImportZipFile(groupName.trim(), groupId)
-        Log.i("ImportRepository", "Copying zip to app storage: ${sourceZip.absolutePath} → ${destZip.absolutePath}")
+        AppLog.i("ImportRepository", "Copying zip to app storage: ${sourceZip.absolutePath} → ${destZip.absolutePath}")
         sourceZip.copyTo(destZip, overwrite = true)
         return destZip.absolutePath
     }
@@ -555,7 +552,7 @@ class ImportRepository @Inject constructor(
             val destFile = File(destDir, srcFile.name)
             if (destFile.isFile && destFile.length() == srcFile.length()) continue
             runCatching { srcFile.copyTo(destFile, overwrite = true) }
-                .onFailure { Log.w("ImportRepository", "Failed to sync '${srcFile.name}': ${it.message}") }
+                .onFailure { AppLog.w("ImportRepository", "Failed to sync '${srcFile.name}': ${it.message}") }
         }
     }
 
