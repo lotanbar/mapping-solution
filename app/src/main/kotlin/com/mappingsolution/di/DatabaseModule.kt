@@ -19,7 +19,8 @@ object DatabaseModule {
 
     @Provides
     @Singleton
-    fun provideStorageManager(@ApplicationContext context: Context): StorageManager = StorageManager(context)
+    fun provideStorageManager(@ApplicationContext context: Context): StorageManager =
+        StorageManager(context.getExternalFilesDir(null) ?: context.filesDir)
 
     @Provides
     @Singleton

@@ -123,10 +123,11 @@ class UnifiedPoiViewModel @Inject constructor(
         }
 
         val stored = poiRepository.getById(id)
-        if (stored?.savedSource != null) {
+        val savedSource = stored?.savedSource
+        if (savedSource != null) {
             val source = loadBookmarkedSource(stored)
-            publishExternal(source, stored.savedSource, stored)
-            if (stored.savedSource == DestinationSource.OSM) {
+            publishExternal(source, savedSource, stored)
+            if (savedSource == DestinationSource.OSM) {
                 osmPoiRepository.registerSearchPois(listOf(source))
                 enrichOsm(source)
             }
@@ -225,9 +226,10 @@ class UnifiedPoiViewModel @Inject constructor(
 
     private fun sourceMedia(poi: Poi, group: Group?): List<String> {
         val supported = poi.mediaPaths.filter(MediaUtils::isSupported)
+        val sourceZipPath = group?.sourceZipPath
         return when {
-            group?.sourceZipPath != null -> supported.map {
-                com.mappingsolution.data.image.ZipImageFetcher.uriFor(group.sourceZipPath, it).toString()
+            sourceZipPath != null -> supported.map {
+                com.mappingsolution.data.image.ZipImageFetcher.uriFor(sourceZipPath, it).toString()
             }
             else -> {
                 val dir = storageManager.getPoiMediaDir(poi.name, poi.id)

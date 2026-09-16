@@ -4,6 +4,7 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
+import android.util.Log
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import coil.Coil
@@ -13,6 +14,7 @@ import com.mappingsolution.data.image.ZipImageFetcher
 import com.mappingsolution.data.map.MbTilesInterceptor
 import com.mappingsolution.data.migration.LegacyDbMigration
 import com.mappingsolution.data.migration.StorageV2Migration
+import com.mappingsolution.data.util.AppLog
 import com.mappingsolution.data.util.StorageManager
 import com.mappingsolution.service.ImportWorker
 import com.mappingsolution.service.MbtilesImportWorker
@@ -40,6 +42,10 @@ class MappingApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        AppLog.sink = object : AppLog.Sink {
+            override fun d(tag: String, message: String) { Log.d(tag, message) }
+            override fun w(tag: String, message: String, error: Throwable?) { Log.w(tag, message, error) }
+        }
 
         // MapLibre must be initialized before anything that touches its static context
         org.maplibre.android.MapLibre.getInstance(this)
@@ -77,7 +83,7 @@ class MappingApplication : Application(), Configuration.Provider {
                 .build()
         )
 
-        val storageManager = StorageManager(this)
+        val storageManager = StorageManager(getExternalFilesDir(null) ?: filesDir)
         val marker = File(storageManager.rootDir, ".migrated")
         if (!marker.exists()) {
             runBlocking(Dispatchers.IO) {

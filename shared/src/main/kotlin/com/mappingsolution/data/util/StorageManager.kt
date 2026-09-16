@@ -1,18 +1,15 @@
 package com.mappingsolution.data.util
 
-import android.content.Context
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
-import javax.inject.Inject
-import javax.inject.Singleton
 
-@Singleton
-class StorageManager @Inject constructor(
-    @ApplicationContext private val context: Context,
-) {
+/**
+ * Resolves every on-disk location under [baseDir], the platform's app-private data directory
+ * (Android: `getExternalFilesDir(null)`; desktop: the per-user app data folder).
+ */
+class StorageManager(private val baseDir: File) {
 
     /** App-private external storage root — for non-image data (JSON, JSONL, recordings, exports). */
-    val rootDir: File = File(context.getExternalFilesDir(null) ?: context.filesDir, "mapping-solution-assets")
+    val rootDir: File = File(baseDir, "mapping-solution-assets")
 
     /**
      * App-private external storage — for image/media files.
@@ -21,7 +18,7 @@ class StorageManager @Inject constructor(
      * Falls back to internal storage if external is unavailable.
      */
     private val mediaRootDir: File
-        get() = (context.getExternalFilesDir(null) ?: context.filesDir)
+        get() = baseDir
 
     init { rootDir.mkdirs() }
 
@@ -192,7 +189,7 @@ class StorageManager @Inject constructor(
 
     // ── MBTiles — stored in app-private external storage (no MANAGE_EXTERNAL_STORAGE needed) ──
     private val mbtilesRootDir: File
-        get() = (context.getExternalFilesDir(null) ?: context.filesDir)
+        get() = baseDir
 
     fun getMbtilesDir(): File = File(mbtilesRootDir, "mbtiles").also { it.mkdirs() }
 

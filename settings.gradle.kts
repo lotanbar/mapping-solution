@@ -21,3 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "mapping-solution"
 include(":app")
+include(":shared")

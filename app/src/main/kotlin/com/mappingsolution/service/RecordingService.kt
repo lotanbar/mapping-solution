@@ -234,7 +234,7 @@ class RecordingService : Service() {
         val current = recordingRepository.state.value as? RecordingState.Active ?: return
         if (current.isStopping) return
         val now = System.currentTimeMillis()
-        val pausedDuration = if (current.pausedSinceMs != null) now - current.pausedSinceMs else 0L
+        val pausedDuration = current.pausedSinceMs?.let { now - it } ?: 0L
         recordingRepository.updateState(
             current.copy(
                 totalPausedMs = current.totalPausedMs + pausedDuration,

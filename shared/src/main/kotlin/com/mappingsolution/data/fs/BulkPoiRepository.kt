@@ -3,6 +3,7 @@ package com.mappingsolution.data.fs
 import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.model.MediaUtils
+import com.mappingsolution.data.util.AppLog
 import com.mappingsolution.data.util.StorageManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -73,7 +74,7 @@ class BulkPoiRepository @Inject constructor(private val storageManager: StorageM
             kotlin.math.abs(east  - cachedEast)  < BOUNDS_EPSILON &&
             kotlin.math.abs(west  - cachedWest)  < BOUNDS_EPSILON
         ) {
-            android.util.Log.d("BulkPoiRepo", "viewport cache HIT — ${cachedResult.size} POIs")
+            AppLog.d("BulkPoiRepo", "viewport cache HIT — ${cachedResult.size} POIs")
             _poisInViewport.value = cachedResult
             return@withContext
         }
@@ -91,7 +92,7 @@ class BulkPoiRepository @Inject constructor(private val storageManager: StorageM
                 allPois.filterTo(result) { it.lat in south..north && it.lng in west..east }
             }
 
-            android.util.Log.d("BulkPoiRepo", "in-memory filter → ${result.size} POIs (needsIO=$needsIO)")
+            AppLog.d("BulkPoiRepo", "in-memory filter → ${result.size} POIs (needsIO=$needsIO)")
             cachedNorth    = north
             cachedSouth    = south
             cachedEast     = east
@@ -107,17 +108,17 @@ class BulkPoiRepository @Inject constructor(private val storageManager: StorageM
     /** Reads and parses the entire JSONL file for a group into memory. Called once per group. */
     private fun loadGroupFromDisk(group: Group): List<Poi> {
         val jsonlFile = storageManager.getBulkPoisFile(group.name, group.id)
-        android.util.Log.d("BulkPoiRepo", "loading '${group.name}' from disk: ${jsonlFile.length()} bytes")
+        AppLog.d("BulkPoiRepo", "loading '${group.name}' from disk: ${jsonlFile.length()} bytes")
         if (!jsonlFile.exists()) return emptyList()
         val pois = mutableListOf<Poi>()
         jsonlFile.bufferedReader().useLines { lines ->
             lines.forEach { line ->
                 if (line.isBlank()) return@forEach
                 runCatching { pois.add(parseLine(line)) }
-                    .onFailure { android.util.Log.w("BulkPoiRepo", "parse error: $line", it) }
+                    .onFailure { AppLog.w("BulkPoiRepo", "parse error: $line", it) }
             }
         }
-        android.util.Log.d("BulkPoiRepo", "loaded ${pois.size} POIs for '${group.name}'")
+        AppLog.d("BulkPoiRepo", "loaded ${pois.size} POIs for '${group.name}'")
         return pois
     }
 

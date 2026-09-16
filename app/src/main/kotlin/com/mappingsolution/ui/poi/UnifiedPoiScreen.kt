@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.mappingsolution.data.model.AudioDuration
 import com.mappingsolution.data.model.MediaUtils
 import com.mappingsolution.data.model.PlanDestination
 import com.mappingsolution.ui.common.GroupPickerField
@@ -181,7 +182,7 @@ fun UnifiedPoiScreen(
                             )
                         } else {
                             PoiMediaPager(
-                                mediaItems = paths.mapIndexed { index, path -> MediaUtils.createMediaItem(path, index) },
+                                mediaItems = paths.mapIndexed { index, path -> MediaUtils.createMediaItem(path, index, AudioDuration::read) },
                                 onItemClick = { index -> onOpenMediaPreview(poi.id, index, paths) },
                                 onRemoveItem = if (state.isEditing) ({ index ->
                                     if (shownMedia[index].isPersonal) viewModel.removeDraftPhoto(shownMedia[index].path)
