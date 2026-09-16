@@ -1,18 +1,8 @@
 package com.mappingsolution.ui.library
 
-import android.content.Intent
-import android.net.Uri
-import android.os.Build
-import android.os.Environment
-import android.provider.Settings
-import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.runtime.DisposableEffect
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -91,9 +81,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
 import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.Plan
 import com.mappingsolution.data.model.Poi
@@ -103,12 +91,13 @@ import com.mappingsolution.data.fs.ImportResult
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.ui.common.IconCatalog
 import kotlinx.coroutines.delay
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
 fun LibraryScreen(
     onNavigateBack: () -> Unit,
@@ -118,7 +107,15 @@ fun LibraryScreen(
     onEditRoute: (String) -> Unit,
     onOpenPlan: (String) -> Unit,
     onContinueRecording: (String) -> Unit,
-    viewModel: LibraryViewModel = hiltViewModel(),
+    viewModel: LibraryViewModel,
+    /** Lets the user choose a GPX/ZIP file or folder, then calls the matching ViewModel import. */
+    onImportGpx: () -> Unit,
+    /** Lets the user choose an MBTiles file, then calls [LibraryViewModel.importMbtilesFile]. */
+    onImportMbtiles: () -> Unit,
+    /** Hands an exported GPX file to the platform's share/save flow. */
+    onShareExport: (File) -> Unit,
+    /** Shows a brief transient message (Android: toast). */
+    onShowMessage: (String) -> Unit,
 ) {
     val searchQuery by viewModel.searchQuery.collectAsState()
     val filteredPoiGroups by viewModel.filteredPoiGroups.collectAsState()
@@ -153,118 +150,8 @@ fun LibraryScreen(
     val refiningRouteIds by viewModel.refiningRouteIds.collectAsState()
     val refinementProgress by viewModel.refinementProgress.collectAsState()
 
-    val context = LocalContext.current
-
-    // ── Permission state (re-evaluated on every resume) ───────────────────
-    var hasAllFilesPermission by remember {
-        mutableStateOf(
-            Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
-        )
-    }
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                hasAllFilesPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.R ||
-                    Environment.isExternalStorageManager()
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    var showAllFilesDialog by remember { mutableStateOf(false) }
-    var showFolderPicker by remember { mutableStateOf(false) }
-    var showGpxFilePicker by remember { mutableStateOf(false) }
-
-    val allFilesSettingsLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { /* ON_RESUME above will update hasAllFilesPermission */ }
-
-    var showMbtilesPicker by remember { mutableStateOf(false) }
-
-    if (showAllFilesDialog) {
-        AlertDialog(
-            onDismissRequest = { showAllFilesDialog = false },
-            title = { Text("Allow full file access?") },
-            text = {
-                Text(
-                    "Mapping Solution needs \"All files access\" to browse and import " +
-                    "your GPX folder. Tap Open Settings, enable the toggle, then come back."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showAllFilesDialog = false
-                    allFilesSettingsLauncher.launch(
-                        Intent(
-                            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                            Uri.parse("package:${context.packageName}")
-                        )
-                    )
-                }) { Text("Open Settings") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAllFilesDialog = false }) { Text("Not now") }
-            }
-        )
-    }
-
-    if (showMbtilesPicker) {
-        FilePickerDialog(
-            initialPath = "/storage/emulated/0",
-            fileExtensions = listOf(".mbtiles"),
-            onFileSelected = { file ->
-                showMbtilesPicker = false
-                viewModel.importMbtilesFile(android.net.Uri.fromFile(file))
-            },
-            onDismiss = { showMbtilesPicker = false },
-        )
-    }
-
-    if (showFolderPicker) {
-        FolderPickerDialog(
-            initialPath = "/storage/emulated/0",
-            onFolderSelected = { path ->
-                viewModel.importFromFolder(path)
-                showFolderPicker = false
-            },
-            onDismiss = { showFolderPicker = false }
-        )
-    }
-
-    if (showGpxFilePicker) {
-        FilePickerDialog(
-            initialPath = "/storage/emulated/0",
-            fileExtensions = listOf(".gpx", ".zip"),
-            onFileSelected = { file ->
-                if (file.extension.equals("zip", ignoreCase = true)) {
-                    viewModel.importZipFile(file.absolutePath)
-                } else {
-                    viewModel.importSingleGpxFile(file.absolutePath)
-                }
-                showGpxFilePicker = false
-            },
-            onFolderSelected = { folder ->
-                viewModel.importFromFolder(folder.absolutePath)
-                showGpxFilePicker = false
-            },
-            onDismiss = { showGpxFilePicker = false },
-        )
-    }
-
-
-
-    // Observe export URI and fire the share chooser
     LaunchedEffect(Unit) {
-        viewModel.exportUri.collect { uri: Uri ->
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "application/gpx+xml"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            context.startActivity(Intent.createChooser(intent, "Export GPX"))
-        }
+        viewModel.exportedFile.collect(onShareExport)
     }
 
     // ── Local dialog state ────────────────────────────────────────────────
@@ -497,7 +384,7 @@ fun LibraryScreen(
                                 if (now - lastDeleteTapTime > 2500L) deleteTapCount = 0
                                 deleteTapCount++
                                 lastDeleteTapTime = now
-                                android.widget.Toast.makeText(context, "Tap 3 times in quick succession to delete", android.widget.Toast.LENGTH_SHORT).show()
+                                onShowMessage("Tap 3 times in quick succession to delete")
                                 if (deleteTapCount >= 3) { showDeleteGroupsDialog = true; deleteTapCount = 0 }
                             }) {
                                 Icon(
@@ -540,7 +427,7 @@ fun LibraryScreen(
                                 if (now - lastDeleteTapTime > 2500L) deleteTapCount = 0
                                 deleteTapCount++
                                 lastDeleteTapTime = now
-                                android.widget.Toast.makeText(context, "Tap 3 times in quick succession to delete", android.widget.Toast.LENGTH_SHORT).show()
+                                onShowMessage("Tap 3 times in quick succession to delete")
                                 if (deleteTapCount >= 3) { showDeleteRowsDialog = true; deleteTapCount = 0 }
                             }) {
                                 Icon(
@@ -566,7 +453,7 @@ fun LibraryScreen(
                                 if (now - lastDeleteTapTime > 2500L) deleteTapCount = 0
                                 deleteTapCount++
                                 lastDeleteTapTime = now
-                                android.widget.Toast.makeText(context, "Tap 3 times in quick succession to delete", android.widget.Toast.LENGTH_SHORT).show()
+                                onShowMessage("Tap 3 times in quick succession to delete")
                                 if (deleteTapCount >= 3) { showDeleteRasterLayersDialog = true; deleteTapCount = 0 }
                             }) {
                                 Icon(
@@ -593,8 +480,7 @@ fun LibraryScreen(
                     title = "Map Layers",
                     isLoading = isMbtilesImporting,
                     onAction = {
-                        if (hasAllFilesPermission) showMbtilesPicker = true
-                        else showAllFilesDialog = true
+                        onImportMbtiles()
                     },
                 )
             }
@@ -658,8 +544,7 @@ fun LibraryScreen(
                         title = "POIs",
                         isLoading = isImporting,
                         onAction = {
-                            if (hasAllFilesPermission) showGpxFilePicker = true
-                            else showAllFilesDialog = true
+                            onImportGpx()
                         },
                     )
                 }
@@ -716,7 +601,7 @@ fun LibraryScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .drawBehind { drawRect(android.graphics.Color.parseColor("#33FF9800").let { c -> Color(c) }) }
+                                    .drawBehind { drawRect(Color(0x33FF9800)) }
                                     .padding(horizontal = 16.dp, vertical = 6.dp),
                             ) {
                                 Icon(

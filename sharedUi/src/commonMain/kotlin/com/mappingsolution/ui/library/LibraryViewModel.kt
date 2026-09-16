@@ -1,17 +1,8 @@
 package com.mappingsolution.ui.library
 
 import java.io.File
-import androidx.core.content.FileProvider
-import android.content.Context
-import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.ExistingWorkPolicy
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.OutOfQuotaPolicy
-import androidx.work.WorkInfo
-import androidx.work.WorkManager
-import androidx.work.workDataOf
 import com.mappingsolution.data.fs.BulkPoiRepository
 import com.mappingsolution.data.fs.ExportRepository
 import com.mappingsolution.data.fs.GroupFileRepository
@@ -30,11 +21,6 @@ import com.mappingsolution.data.model.RasterLayer
 import com.mappingsolution.data.model.Route
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.data.places.OsmPoiRepository
-import com.mappingsolution.service.ImportWorker
-import com.mappingsolution.service.MbtilesImportWorker
-import com.mappingsolution.service.RouteRefinementWorker
-import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -46,8 +32,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.util.UUID
-import javax.inject.Inject
 
 sealed class DeleteGroupResult {
     object Done : DeleteGroupResult()
@@ -66,9 +50,7 @@ sealed interface LibrarySelectionMode {
     data class RasterLayerSelection(val selectedIds: Set<String> = emptySet()) : LibrarySelectionMode
 }
 
-@HiltViewModel
-class LibraryViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
+open class LibraryViewModel(
     private val groupRepository: GroupFileRepository,
     private val poiRepository: PoiFileRepository,
     private val routeRepository: RouteFileRepository,
@@ -78,15 +60,15 @@ class LibraryViewModel @Inject constructor(
     private val bulkPoiRepository: BulkPoiRepository,
     private val mapLayersState: MapLayersState,
     private val rasterLayerRepository: RasterLayerRepository,
+    private val jobs: LibraryJobs,
 ) : ViewModel() {
 
-    private val workManager = WorkManager.getInstance(context)
+    val refinementProgress: StateFlow<Map<String, String>> = jobs.refinementProgress
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
-    private val _refiningRouteIds = MutableStateFlow<Set<String>>(emptySet())
-    val refiningRouteIds: StateFlow<Set<String>> = _refiningRouteIds.asStateFlow()
-
-    private val _refinementProgress = MutableStateFlow<Map<String, String>>(emptyMap())
-    val refinementProgress: StateFlow<Map<String, String>> = _refinementProgress.asStateFlow()
+    val refiningRouteIds: StateFlow<Set<String>> = refinementProgress
+        .map { it.keys }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
 
     // ── Map layer state ───────────────────────────────────────────────────
 
@@ -339,7 +321,7 @@ class LibraryViewModel @Inject constructor(
     fun deleteSelectedGroupsWithItems() {
         val ids = (_selectionMode.value as? LibrarySelectionMode.GroupSelection)?.selectedIds ?: return
         viewModelScope.launch {
-            _isBusy.value = true
+            reportProgress("Deleting…", 0, 0)
             val selectedGroups = _allGroups.value.filter { it.id in ids }
             val bulkIds = selectedGroups.filter { it.isBulk }.map { it.id }.toSet()
             val regularIds = ids - bulkIds
@@ -365,7 +347,6 @@ class LibraryViewModel @Inject constructor(
     fun orphanSelectedGroups() {
         val ids = (_selectionMode.value as? LibrarySelectionMode.GroupSelection)?.selectedIds ?: return
         viewModelScope.launch {
-            _isBusy.value = true
             reportProgress("Orphaning…", 0, 0)
             val selectedGroups = _allGroups.value.filter { it.id in ids }
             val regularIds = selectedGroups.filter { !it.isBulk }.map { it.id }.toSet()
@@ -428,332 +409,106 @@ class LibraryViewModel @Inject constructor(
 
     // ── Import ────────────────────────────────────────────────────────────
 
-    private val _isBusy = MutableStateFlow(false)
-    val isImporting: StateFlow<Boolean> = _isBusy.asStateFlow()
+    /** Progress for work this screen runs itself (bulk deletes); imports report through [jobs]. */
+    private val _localBusy = MutableStateFlow<ImportJob?>(null)
 
-    private val _importingFolderName = MutableStateFlow<String?>(null)
-    val importingFolderName: StateFlow<String?> = _importingFolderName.asStateFlow()
+    private val importJob: StateFlow<ImportJob?> = jobs.importJob
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    private val _importProgressText = MutableStateFlow("")
-    val importProgressText: StateFlow<String> = _importProgressText.asStateFlow()
+    private val visibleJob: StateFlow<ImportJob?> = combine(_localBusy, importJob) { local, job -> local ?: job }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    private val _importProgressFraction = MutableStateFlow(0f)
-    val importProgressFraction: StateFlow<Float> = _importProgressFraction.asStateFlow()
+    val isImporting: StateFlow<Boolean> = visibleJob
+        .map { it?.isRunning == true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-    private val _importResult = MutableStateFlow<ImportResult?>(null)
-    val importResult: StateFlow<ImportResult?> = _importResult.asStateFlow()
+    val importingFolderName: StateFlow<String?> = visibleJob
+        .map { job -> job?.label?.takeIf { job.isRunning } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    // ID of the work request we most recently enqueued (or reconnected to).
-    private var currentWorkId: UUID? = null
-    // ID of the last work record whose result was dismissed — filtered from re-emissions
-    // before WorkManager's async pruneWork() removes it from the database.
-    private var dismissedWorkId: UUID? = null
+    val importProgressText: StateFlow<String> = visibleJob
+        .map { job -> job?.progressText?.takeIf { job.isRunning }.orEmpty() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
-    init {
-        viewModelScope.launch {
-            workManager.getWorkInfosByTagFlow(RouteRefinementWorker.TAG).collect { infos ->
-                val active = infos.filter {
-                    it.state == WorkInfo.State.RUNNING ||
-                        it.state == WorkInfo.State.ENQUEUED ||
-                        it.state == WorkInfo.State.BLOCKED
-                }
-                _refiningRouteIds.value = active.mapNotNull { info ->
-                    info.tags.firstOrNull {
-                        it.startsWith(RouteRefinementWorker.ROUTE_TAG_PREFIX)
-                    }?.removePrefix(RouteRefinementWorker.ROUTE_TAG_PREFIX)
-                }.toSet()
-                _refinementProgress.value = active.mapNotNull { info ->
-                    val routeId = info.tags.firstOrNull {
-                        it.startsWith(RouteRefinementWorker.ROUTE_TAG_PREFIX)
-                    }?.removePrefix(RouteRefinementWorker.ROUTE_TAG_PREFIX) ?: return@mapNotNull null
-                    val phase = info.progress.getString(RouteRefinementWorker.KEY_PHASE)
-                        ?: if (info.state == WorkInfo.State.RUNNING) "Refining…" else "Queued for refinement"
-                    val done = info.progress.getInt(RouteRefinementWorker.KEY_DONE, 0)
-                    val total = info.progress.getInt(RouteRefinementWorker.KEY_TOTAL, 0)
-                    val progress = if (total > 0) "$phase — ${done * 100 / total}%" else phase
-                    routeId to progress
-                }.toMap()
-            }
-        }
-        // Reconnect to any import that was already running when this ViewModel was created
-        // (e.g. user navigated away mid-import and returned to the Library screen).
-        viewModelScope.launch {
-            workManager.getWorkInfosForUniqueWorkFlow(IMPORT_WORK_NAME).collect { infos ->
-                val info = when {
-                    // We started (or already reconnected to) a specific work request.
-                    currentWorkId != null -> infos.firstOrNull { it.id == currentWorkId }
-                    // Reconnection: prefer active work, then fall back to the most recent
-                    // terminal record — but never show a result we already dismissed.
-                    else -> infos.firstOrNull {
-                        it.id != dismissedWorkId &&
-                            (it.state == WorkInfo.State.RUNNING ||
-                                it.state == WorkInfo.State.ENQUEUED ||
-                                it.state == WorkInfo.State.BLOCKED)
-                    } ?: infos.lastOrNull { it.id != dismissedWorkId }
-                }
-                handleWorkInfo(info)
-            }
-        }
-        // Reconnect to any in-flight MBTiles import when this ViewModel is (re)created
-        viewModelScope.launch {
-            workManager.getWorkInfosForUniqueWorkFlow(MBTILES_IMPORT_WORK_NAME).collect { infos ->
-                val info = when {
-                    currentMbtilesWorkId != null -> infos.firstOrNull { it.id == currentMbtilesWorkId }
-                    else -> infos.firstOrNull {
-                        it.id != dismissedMbtilesWorkId &&
-                            (it.state == WorkInfo.State.RUNNING ||
-                                it.state == WorkInfo.State.ENQUEUED ||
-                                it.state == WorkInfo.State.BLOCKED)
-                    } ?: infos.lastOrNull { it.id != dismissedMbtilesWorkId }
-                }
-                handleMbtilesWorkInfo(info)
-            }
-        }
-    }
+    val importProgressFraction: StateFlow<Float> = visibleJob
+        .map { job -> job?.progressFraction?.takeIf { job.isRunning } ?: 0f }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0f)
 
-    fun refineRoute(routeId: String) {
-        RouteRefinementWorker.enqueue(context, routeId)
-    }
-
-    fun cancelRouteRefinement(routeId: String) {
-        RouteRefinementWorker.cancel(context, routeId)
-    }
-
-    private fun handleWorkInfo(info: WorkInfo?) {
-        if (info == null) return
-        when (info.state) {
-            WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
-                if (currentWorkId == null) currentWorkId = info.id
-                _isBusy.value = true
-            }
-            WorkInfo.State.RUNNING -> {
-                if (currentWorkId == null) currentWorkId = info.id
-                _isBusy.value = true
-                val folderName = info.tags.firstOrNull { it.startsWith(TAG_FOLDER_PREFIX) }
-                    ?.removePrefix(TAG_FOLDER_PREFIX)
-                if (folderName != null) _importingFolderName.value = folderName
-                val phase = info.progress.getString(ImportWorker.KEY_PHASE) ?: return
-                val done = info.progress.getInt(ImportWorker.KEY_DONE, 0)
-                val total = info.progress.getInt(ImportWorker.KEY_TOTAL, 0)
-                reportProgress(phase, done, total)
-            }
-            WorkInfo.State.SUCCEEDED -> {
-                if (currentWorkId == null) currentWorkId = info.id
-                val data = info.outputData
-                _importResult.value = ImportResult(
-                    poisImported = data.getInt(ImportWorker.KEY_POIS_IMPORTED, 0),
-                    routesImported = data.getInt(ImportWorker.KEY_ROUTES_IMPORTED, 0),
-                    filesProcessed = data.getInt(ImportWorker.KEY_FILES_PROCESSED, 0),
-                    filesSkipped = data.getInt(ImportWorker.KEY_FILES_SKIPPED, 0),
-                    errors = data.getStringArray(ImportWorker.KEY_ERRORS)?.toList() ?: emptyList(),
-                )
-                clearProgress()
-            }
-            WorkInfo.State.FAILED -> {
-                if (currentWorkId == null) currentWorkId = info.id
-                val data = info.outputData
-                _importResult.value = ImportResult(
-                    filesSkipped = data.getInt(ImportWorker.KEY_FILES_SKIPPED, 0),
-                    errors = data.getStringArray(ImportWorker.KEY_ERRORS)?.toList() ?: emptyList(),
-                    validationErrors = data.getStringArray(ImportWorker.KEY_VALIDATION_ERRORS)?.toList() ?: emptyList(),
-                )
-                clearProgress()
-            }
-            WorkInfo.State.CANCELLED -> {
-                if (currentWorkId == null || currentWorkId == info.id) {
-                    currentWorkId = null
-                    clearProgress()
-                }
-            }
-        }
-    }
+    val importResult: StateFlow<ImportResult?> = importJob
+        .map { it?.result }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private fun clearProgress() {
-        _importProgressText.value = ""
-        _importProgressFraction.value = 0f
-        _importingFolderName.value = null
-        _isBusy.value = false
+        _localBusy.value = null
     }
 
     private fun reportProgress(phase: String, done: Int, total: Int) {
         val pct = if (total > 0) " — ${done * 100 / total}%" else ""
-        _importProgressText.value = "$phase$pct"
-        _importProgressFraction.value = if (total > 0) done.toFloat() / total else 0f
+        _localBusy.value = ImportJob(
+            label = null,
+            progressText = "$phase$pct",
+            progressFraction = if (total > 0) done.toFloat() / total else 0f,
+            isRunning = true,
+        )
     }
 
-    fun importFromFolder(path: String) {
-        val folderName = java.io.File(path).name
-        val request = OneTimeWorkRequestBuilder<ImportWorker>()
-            .setInputData(workDataOf(ImportWorker.KEY_FOLDER_PATH to path))
-            .addTag("$TAG_FOLDER_PREFIX$folderName")
-            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            .build()
-        currentWorkId = request.id
-        dismissedWorkId = null
-        _importResult.value = null
-        _isBusy.value = true
-        _importingFolderName.value = folderName
-        _importProgressText.value = "Starting…"
-        _importProgressFraction.value = 0f
-        workManager.enqueueUniqueWork(IMPORT_WORK_NAME, ExistingWorkPolicy.REPLACE, request)
-    }
+    fun refineRoute(routeId: String) = jobs.refineRoute(routeId)
 
-    fun importZipFile(filePath: String) {
-        val fileName = java.io.File(filePath).nameWithoutExtension.takeIf { it.isNotEmpty() } ?: "Import"
-        val request = OneTimeWorkRequestBuilder<ImportWorker>()
-            .setInputData(workDataOf(ImportWorker.KEY_ZIP_PATH to filePath))
-            .addTag("$TAG_FOLDER_PREFIX$fileName")
-            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            .build()
-        currentWorkId = request.id
-        dismissedWorkId = null
-        _importResult.value = null
-        _isBusy.value = true
-        _importingFolderName.value = fileName
-        _importProgressText.value = "Starting…"
-        _importProgressFraction.value = 0f
-        workManager.enqueueUniqueWork(IMPORT_WORK_NAME, ExistingWorkPolicy.REPLACE, request)
-    }
+    fun cancelRouteRefinement(routeId: String) = jobs.cancelRefinement(routeId)
 
-    fun importSingleGpxFile(filePath: String) {
-        val fileName = java.io.File(filePath).nameWithoutExtension.takeIf { it.isNotEmpty() } ?: "Import"
-        val request = OneTimeWorkRequestBuilder<ImportWorker>()
-            .setInputData(workDataOf(ImportWorker.KEY_FILE_PATH to filePath))
-            .addTag("$TAG_FOLDER_PREFIX$fileName")
-            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            .build()
-        currentWorkId = request.id
-        dismissedWorkId = null
-        _importResult.value = null
-        _isBusy.value = true
-        _importingFolderName.value = fileName
-        _importProgressText.value = "Starting…"
-        _importProgressFraction.value = 0f
-        workManager.enqueueUniqueWork(IMPORT_WORK_NAME, ExistingWorkPolicy.REPLACE, request)
-    }
+    fun importFromFolder(path: String) = jobs.importFolder(path)
 
-    fun dismissImportResult() {
-        dismissedWorkId = currentWorkId
-        currentWorkId = null
-        _importResult.value = null
-        workManager.pruneWork()
-    }
+    fun importZipFile(filePath: String) = jobs.importZip(filePath)
+
+    fun importSingleGpxFile(filePath: String) = jobs.importGpx(filePath)
+
+    fun dismissImportResult() = jobs.dismissImportResult()
 
     // ── MBTiles import ────────────────────────────────────────────────────
 
-    private val _isMbtilesImporting = MutableStateFlow(false)
-    val isMbtilesImporting: StateFlow<Boolean> = _isMbtilesImporting.asStateFlow()
+    private val mbtilesJob: StateFlow<MbtilesJob?> = jobs.mbtilesJob
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    private val _mbtilesImportProgressText = MutableStateFlow("")
-    val mbtilesImportProgressText: StateFlow<String> = _mbtilesImportProgressText.asStateFlow()
+    val isMbtilesImporting: StateFlow<Boolean> = mbtilesJob
+        .map { it?.isRunning == true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-    private val _mbtilesImportProgressFraction = MutableStateFlow(0f)
-    val mbtilesImportProgressFraction: StateFlow<Float> = _mbtilesImportProgressFraction.asStateFlow()
+    val mbtilesImportProgressText: StateFlow<String> = mbtilesJob
+        .map { job -> job?.progressText?.takeIf { job.isRunning }.orEmpty() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
-    private val _mbtilesImportResult = MutableStateFlow<MbtilesImportResult?>(null)
-    val mbtilesImportResult: StateFlow<MbtilesImportResult?> = _mbtilesImportResult.asStateFlow()
+    val mbtilesImportProgressFraction: StateFlow<Float> = mbtilesJob
+        .map { job -> job?.progressFraction?.takeIf { job.isRunning } ?: 0f }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0f)
 
-    private var currentMbtilesWorkId: UUID? = null
-    private var dismissedMbtilesWorkId: UUID? = null
+    val mbtilesImportResult: StateFlow<MbtilesImportResult?> = mbtilesJob
+        .map { it?.result }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    private fun handleMbtilesWorkInfo(info: WorkInfo?) {
-        if (info == null) return
-        when (info.state) {
-            WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
-                if (currentMbtilesWorkId == null) currentMbtilesWorkId = info.id
-                _isMbtilesImporting.value = true
-            }
-            WorkInfo.State.RUNNING -> {
-                if (currentMbtilesWorkId == null) currentMbtilesWorkId = info.id
-                _isMbtilesImporting.value = true
-                val bytesCopied = info.progress.getLong(MbtilesImportWorker.KEY_BYTES_COPIED, 0L)
-                val bytesTotal = info.progress.getLong(MbtilesImportWorker.KEY_BYTES_TOTAL, -1L)
-                if (bytesCopied > 0) {
-                    val copiedMb = bytesCopied / 1_048_576.0
-                    _mbtilesImportProgressText.value = if (bytesTotal > 0) {
-                        val totalMb = bytesTotal / 1_048_576.0
-                        "Copying… %.1f MB / %.1f MB".format(copiedMb, totalMb)
-                    } else {
-                        "Copying… %.1f MB".format(copiedMb)
-                    }
-                    _mbtilesImportProgressFraction.value =
-                        if (bytesTotal > 0) bytesCopied.toFloat() / bytesTotal else 0f
-                }
-            }
-            WorkInfo.State.SUCCEEDED -> {
-                if (currentMbtilesWorkId == null) currentMbtilesWorkId = info.id
-                val layerName = info.outputData.getString(MbtilesImportWorker.KEY_LAYER_NAME)
-                _mbtilesImportResult.value = MbtilesImportResult.Success(layerName ?: "")
-                clearMbtilesProgress()
-            }
-            WorkInfo.State.FAILED -> {
-                if (currentMbtilesWorkId == null) currentMbtilesWorkId = info.id
-                val error = info.outputData.getString(MbtilesImportWorker.KEY_ERROR) ?: "Import failed"
-                _mbtilesImportResult.value = MbtilesImportResult.Failure(error)
-                clearMbtilesProgress()
-            }
-            WorkInfo.State.CANCELLED -> {
-                if (currentMbtilesWorkId == null || currentMbtilesWorkId == info.id) {
-                    currentMbtilesWorkId = null
-                    clearMbtilesProgress()
-                }
-            }
-        }
-    }
+    fun importMbtilesFile(source: String) = jobs.importMbtiles(source)
 
-    private fun clearMbtilesProgress() {
-        _mbtilesImportProgressText.value = ""
-        _mbtilesImportProgressFraction.value = 0f
-        _isMbtilesImporting.value = false
-    }
-
-    fun importMbtilesFile(uri: Uri) {
-        val request = OneTimeWorkRequestBuilder<MbtilesImportWorker>()
-            .setInputData(workDataOf(MbtilesImportWorker.KEY_URI to uri.toString()))
-            .build()
-        currentMbtilesWorkId = request.id
-        dismissedMbtilesWorkId = null
-        _mbtilesImportResult.value = null
-        _isMbtilesImporting.value = true
-        _mbtilesImportProgressText.value = "Starting…"
-        _mbtilesImportProgressFraction.value = 0f
-        workManager.enqueueUniqueWork(MBTILES_IMPORT_WORK_NAME, ExistingWorkPolicy.REPLACE, request)
-    }
-
-    fun dismissMbtilesImportResult() {
-        dismissedMbtilesWorkId = currentMbtilesWorkId
-        currentMbtilesWorkId = null
-        _mbtilesImportResult.value = null
-        workManager.pruneWork()
-    }
-
-    companion object {
-        private const val IMPORT_WORK_NAME = "poi_import"
-        private const val TAG_FOLDER_PREFIX = "folder:"
-        private const val MBTILES_IMPORT_WORK_NAME = "mbtiles_import"
-    }
+    fun dismissMbtilesImportResult() = jobs.dismissMbtilesImportResult()
 
     // ── Export ────────────────────────────────────────────────────────────
 
-    private val _exportUri = MutableSharedFlow<Uri>(extraBufferCapacity = 1)
-    val exportUri = _exportUri.asSharedFlow()
+    private val _exportedFile = MutableSharedFlow<File>(extraBufferCapacity = 1)
+
+    /** GPX files ready to hand to the platform's share/save flow. */
+    val exportedFile = _exportedFile.asSharedFlow()
 
     fun exportSelectedGroups() {
         val ids = (_selectionMode.value as? LibrarySelectionMode.GroupSelection)?.selectedIds ?: return
         viewModelScope.launch {
-            val uri = exportRepository.exportGroups(ids)?.let(::shareableUri) ?: return@launch
-            _exportUri.tryEmit(uri)
+            val file = exportRepository.exportGroups(ids) ?: return@launch
+            _exportedFile.tryEmit(file)
         }
     }
 
     fun exportSelectedRows() {
         val ids = (_selectionMode.value as? LibrarySelectionMode.RowSelection)?.selectedIds ?: return
         viewModelScope.launch {
-            val uri = exportRepository.exportRows(ids)?.let(::shareableUri) ?: return@launch
-            _exportUri.tryEmit(uri)
+            val file = exportRepository.exportRows(ids) ?: return@launch
+            _exportedFile.tryEmit(file)
         }
     }
-
-    private fun shareableUri(file: File): Uri =
-        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 }

@@ -25,6 +25,8 @@ kotlin {
             implementation(compose.material3)
             implementation(compose.materialIconsExtended)
             api(compose.components.resources)
+            api(libs.jetbrains.lifecycle.viewmodel.compose)
+            implementation(libs.compose.ui.backhandler)
             implementation(libs.kotlinx.coroutines.core)
         }
     }

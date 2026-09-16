@@ -53,7 +53,7 @@ import com.mappingsolution.service.RecordingService
 import com.mappingsolution.ui.library.GroupFormScreen
 import com.mappingsolution.ui.library.GroupFormViewModel
 import com.mappingsolution.ui.library.IconPickerScreen
-import com.mappingsolution.ui.library.LibraryScreen
+import com.mappingsolution.ui.library.AndroidLibraryScreen
 import com.mappingsolution.ui.main.MainScreen
 import com.mappingsolution.ui.detail.RouteDetailScreen
 import com.mappingsolution.ui.poi.UnifiedPoiScreen
@@ -382,7 +382,7 @@ fun AppNavGraph() {
 
         composable(ROUTE_LIBRARY) {
             val context = LocalContext.current
-            LibraryScreen(
+            AndroidLibraryScreen(
                 onNavigateBack = { navController.popBackStack() },
                 onCreateGroup = { navController.navigate(ROUTE_GROUP_FORM) },
                 onEditGroup = { groupId -> navController.navigate("group_form/$groupId") },
