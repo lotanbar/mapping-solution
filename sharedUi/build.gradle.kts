@@ -11,6 +11,8 @@ kotlin {
         namespace = "com.mappingsolution.ui.shared"
         compileSdk = 37
         minSdk = 26
+        // Required for Compose resources (icons) to be packaged into the APK.
+        androidResources.enable = true
     }
     jvm("desktop")
     jvmToolchain(17)
@@ -22,7 +24,13 @@ kotlin {
             implementation(compose.foundation)
             implementation(compose.material3)
             implementation(compose.materialIconsExtended)
+            api(compose.components.resources)
             implementation(libs.kotlinx.coroutines.core)
         }
     }
+}
+
+compose.resources {
+    publicResClass = true
+    packageOfResClass = "com.mappingsolution.ui.resources"
 }

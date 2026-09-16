@@ -21,8 +21,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
 import com.mappingsolution.data.model.Group
-import androidx.compose.ui.res.painterResource
+import org.jetbrains.compose.resources.painterResource
 import com.mappingsolution.ui.common.IconCatalog
+import com.mappingsolution.ui.library.components.parseHex
 
 /**
  * Shared group picker dropdown used in POI and route forms.
@@ -127,8 +128,4 @@ fun GroupPickerField(
     }
 }
 
-private fun Group.parsedColor(): Color = try {
-    Color(android.graphics.Color.parseColor(color))
-} catch (_: Exception) {
-    Color(0xFF2196F3.toInt())
-}
+private fun Group.parsedColor(): Color = parseHex(color)
