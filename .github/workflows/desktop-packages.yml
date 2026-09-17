@@ -1,0 +1,51 @@
+name: Desktop packages
+
+# Builds the desktop installers on their native OS: jpackage cannot cross-compile.
+on:
+  workflow_dispatch:
+  push:
+    branches: [desktop]
+    paths:
+      - "desktopApp/**"
+      - "shared/**"
+      - "sharedUi/**"
+      - "gradle/**"
+      - "*.gradle.kts"
+      - ".github/workflows/desktop-packages.yml"
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            tasks: packageMsi
+          - os: ubuntu-latest
+            tasks: packageDeb packageRpm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # Gradle itself runs on 17; the foojay resolver downloads the JDK 25 the desktop app needs.
+      - uses: actions/setup-java@v7
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Install rpmbuild
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm fakeroot
+
+      - name: Build packages
+        shell: bash
+        # desktopOnly skips the Android modules, so no Android SDK is required.
+        run: ./gradlew -PdesktopOnly $(printf ':desktopApp:%s ' ${{ matrix.tasks }})
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: MappingSolution-${{ runner.os }}
+          path: desktopApp/build/compose/binaries/main/*/*
+          if-no-files-found: error
