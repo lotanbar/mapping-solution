@@ -1,12 +1,8 @@
 package com.mappingsolution.ui.poi
 
-import android.Manifest
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
-import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.backhandler.BackHandler
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -53,14 +49,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
-import androidx.hilt.navigation.compose.hiltViewModel
-import com.mappingsolution.data.model.AudioDuration
 import com.mappingsolution.data.model.MediaUtils
 import com.mappingsolution.data.model.PlanDestination
 import com.mappingsolution.ui.common.GroupPickerField
@@ -69,54 +60,26 @@ import com.mappingsolution.ui.common.resolvedTextDirection
 import com.mappingsolution.ui.common.isRtl
 import com.mappingsolution.ui.common.resolvedParagraphTextAlign
 import com.mappingsolution.ui.common.resolvedParagraphTextDirection
-import com.mappingsolution.ui.searchnplan.NavigationIntentHelper
-import java.io.File
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun UnifiedPoiScreen(
     onNavigateBack: () -> Unit,
     onOpenMediaPreview: (poiId: String, index: Int, paths: List<String>) -> Unit,
     onAddToPlan: (PlanDestination) -> Unit,
+    viewModel: UnifiedPoiViewModel,
+    /** Starts navigation to the POI in the platform's maps app. */
+    onNavigateTo: (lat: Double, lng: Double) -> Unit,
+    /** Lets the user capture or pick a photo, then calls [UnifiedPoiViewModel.addPhoto]. */
+    onAddPhoto: () -> Unit,
     onCreateGroup: () -> Unit = {},
-    viewModel: UnifiedPoiViewModel = hiltViewModel(),
+    /** Reads an audio file's duration; platforms without a decoder return null. */
+    audioDuration: (String) -> Long? = { null },
 ) {
     val state by viewModel.state.collectAsState()
     val groups by viewModel.groups.collectAsState()
-    val context = LocalContext.current
     var confirmRemove by remember { mutableStateOf(false) }
     var confirmUnstar by remember { mutableStateOf(false) }
-
-    var pendingPhotoUri by remember { mutableStateOf<Uri?>(null) }
-    var pendingPhotoFile by remember { mutableStateOf<File?>(null) }
-    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
-        if (success) pendingPhotoUri?.let { viewModel.addPhoto(it, pendingPhotoFile) }
-        else pendingPhotoFile?.delete()
-        pendingPhotoUri = null
-        pendingPhotoFile = null
-    }
-    var pendingCameraAction by remember { mutableStateOf<(() -> Unit)?>(null) }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) pendingCameraAction?.invoke()
-        pendingCameraAction = null
-    }
-
-    fun openCamera() {
-        val launch = {
-            val file = File(context.filesDir, "poi_photo_${System.currentTimeMillis()}.jpg")
-            pendingPhotoFile = file
-            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file).also {
-                pendingPhotoUri = it
-                photoLauncher.launch(it)
-            }
-            Unit
-        }
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            launch()
-        } else {
-            pendingCameraAction = launch
-            permissionLauncher.launch(Manifest.permission.CAMERA)
-        }
-    }
 
     fun handleBack() {
         if (state.isEditing && !state.isCreation) viewModel.discardEditing() else onNavigateBack()
@@ -177,25 +140,24 @@ fun UnifiedPoiScreen(
                         if (shownMedia.isEmpty()) {
                             NoMediaPlaceholder(
                                 modifier = Modifier.fillMaxSize(),
-                                onLongClick = if (state.isEditing) ::openCamera else null,
+                                onLongClick = if (state.isEditing) onAddPhoto else null,
                                 isLoading = state.isEnrichmentLoading,
                             )
                         } else {
                             PoiMediaPager(
-                                mediaItems = paths.mapIndexed { index, path -> MediaUtils.createMediaItem(path, index, AudioDuration::read) },
+                                mediaItems = paths.mapIndexed { index, path -> MediaUtils.createMediaItem(path, index, audioDuration) },
                                 onItemClick = { index -> onOpenMediaPreview(poi.id, index, paths) },
                                 onRemoveItem = if (state.isEditing) ({ index ->
                                     if (shownMedia[index].isPersonal) viewModel.removeDraftPhoto(shownMedia[index].path)
                                 }) else null,
                                 canRemoveItem = { shownMedia[it].isPersonal },
-                                onLongClick = if (state.isEditing) ::openCamera else null,
+                                onLongClick = if (state.isEditing) onAddPhoto else null,
                                 onPageChanged = { selectedMediaIndex = it },
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
                         WikimediaImageCredit(
                             shownMedia.getOrNull(selectedMediaIndex),
-                            context,
                             Modifier.align(Alignment.BottomStart),
                         )
                     }
@@ -209,7 +171,7 @@ fun UnifiedPoiScreen(
                         ) {
                         if (!state.isEditing) {
                             ReadOnlyPoiContent(state)
-                            WikimediaTextCredit(state, context)
+                            WikimediaTextCredit(state)
                         } else {
                         // 2. Title
                         if (state.isCreated || state.isCreation) {
@@ -247,7 +209,7 @@ fun UnifiedPoiScreen(
                             else -> PoiField("Description", state.sourceDescription.ifBlank { PoiScreenText.NO_DESCRIPTION })
                         }
 
-                        WikimediaTextCredit(state, context)
+                        WikimediaTextCredit(state)
 
                         // 5. Group
                         GroupPickerField(
@@ -266,7 +228,7 @@ fun UnifiedPoiScreen(
                         // 6. Fixed action order
                         PoiActionRow(
                             state = state,
-                            onNavigate = { NavigationIntentHelper.launchSingleNavigation(context, poi.lat, poi.lng) },
+                            onNavigate = { onNavigateTo(poi.lat, poi.lng) },
                             onStar = {
                                 when {
                                     !state.isStarred -> viewModel.star()
@@ -526,7 +488,8 @@ private fun PoiActionButton(
 }
 
 @Composable
-private fun WikimediaImageCredit(media: UnifiedPoiMedia?, context: android.content.Context, modifier: Modifier = Modifier) {
+private fun WikimediaImageCredit(media: UnifiedPoiMedia?, modifier: Modifier = Modifier) {
+    val uriHandler = LocalUriHandler.current
     val url = media?.imageSourceUrl ?: return
     Text(
         "Photo: ${media.imageCredit ?: "Wikimedia Commons"}",
@@ -534,13 +497,14 @@ private fun WikimediaImageCredit(media: UnifiedPoiMedia?, context: android.conte
         color = Color.White,
         modifier = modifier
             .background(Color.Black.copy(alpha = 0.55f))
-            .clickable { openUrl(context, url) }
+            .clickable { uriHandler.openUri(url) }
             .padding(horizontal = 6.dp, vertical = 3.dp),
     )
 }
 
 @Composable
-private fun WikimediaTextCredit(state: UnifiedPoiState, context: android.content.Context) {
+private fun WikimediaTextCredit(state: UnifiedPoiState) {
+    val uriHandler = LocalUriHandler.current
     val url = state.wikimedia?.pageUrl ?: return
     Text(
         if (url.contains("wikipedia.org", ignoreCase = true)) {
@@ -550,13 +514,10 @@ private fun WikimediaTextCredit(state: UnifiedPoiState, context: android.content
         },
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.clickable { openUrl(context, url) },
+        modifier = Modifier.clickable { uriHandler.openUri(url) },
     )
 }
 
-private fun openUrl(context: android.content.Context, url: String) {
-    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-}
 
 @Composable
 private fun ConfirmDialog(

@@ -31,9 +31,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.mappingsolution.data.util.AppLog
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import coil3.request.crossfade
@@ -41,7 +41,6 @@ import com.mappingsolution.ui.image.ZipImageFetcher
 import com.mappingsolution.data.model.MediaItem
 import com.mappingsolution.data.model.MediaType
 import java.io.File
-import android.net.Uri
 import kotlin.random.Random
 
 /**
@@ -103,7 +102,6 @@ fun PoiMediaPager(
     onPageChanged: (Int) -> Unit = {},
 ) {
     val pagerState = rememberPagerState(pageCount = { mediaItems.size })
-    val context = LocalContext.current
 
     LaunchedEffect(pagerState.currentPage) {
         onPageChanged(pagerState.currentPage)
@@ -158,7 +156,7 @@ fun PoiMediaPager(
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Fit,
                             error = androidx.compose.ui.graphics.painter.ColorPainter(Color.Transparent),
-                            onError = { android.util.Log.e("PoiMediaPager", "Image load failed: ${item.path} — ${it.result.throwable}") },
+                            onError = { AppLog.e("PoiMediaPager", "Image load failed: ${item.path}", it.result.throwable) },
                         )
                     }
                 }

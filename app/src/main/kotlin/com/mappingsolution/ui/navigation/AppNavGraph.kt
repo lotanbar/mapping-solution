@@ -56,7 +56,7 @@ import com.mappingsolution.ui.library.IconPickerScreen
 import com.mappingsolution.ui.library.AndroidLibraryScreen
 import com.mappingsolution.ui.main.MainScreen
 import com.mappingsolution.ui.detail.RouteDetailScreen
-import com.mappingsolution.ui.poi.UnifiedPoiScreen
+import com.mappingsolution.ui.poi.AndroidUnifiedPoiScreen
 import com.mappingsolution.ui.poi.media.MediaPreviewScreen
 import com.mappingsolution.ui.recording.RouteFinalizeScreen
 import com.mappingsolution.ui.searchnplan.NavigationIntentHelper
@@ -319,7 +319,7 @@ fun AppNavGraph() {
                 navArgument(KEY_LNG) { type = NavType.StringType; defaultValue = "0.0" },
             ),
         ) {
-            UnifiedPoiScreen(
+            AndroidUnifiedPoiScreen(
                 onNavigateBack = { navController.popBackStack() },
                 onOpenMediaPreview = { poiId, index, paths ->
                     navController.currentBackStackEntry?.savedStateHandle?.set("media_paths", paths)
@@ -348,7 +348,7 @@ fun AppNavGraph() {
                     onNavigateToEdit = { routeId -> navController.navigate("route_edit/$routeId") },
                 )
             } else {
-                UnifiedPoiScreen(
+                AndroidUnifiedPoiScreen(
                     onNavigateBack = { navController.popBackStack() },
                     onOpenMediaPreview = { poiId, index, paths ->
                         navController.currentBackStackEntry?.savedStateHandle?.set("media_paths", paths)

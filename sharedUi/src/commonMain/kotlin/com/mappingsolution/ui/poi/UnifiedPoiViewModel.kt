@@ -1,8 +1,5 @@
 package com.mappingsolution.ui.poi
 
-import android.content.Context
-import android.net.Uri
-import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mappingsolution.data.fs.BulkPoiRepository
@@ -18,8 +15,6 @@ import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.data.places.OsmPoiRepository
 import com.mappingsolution.data.places.WikimediaContent
 import com.mappingsolution.data.util.StorageManager
-import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -32,8 +27,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.InputStream
 import java.util.UUID
-import javax.inject.Inject
 
 data class UnifiedPoiMedia(
     val path: String,
@@ -71,21 +66,29 @@ data class UnifiedPoiState(
     val isExternal: Boolean get() = !isCreation && !isCreated
 }
 
-@HiltViewModel
-class UnifiedPoiViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
+/** Which POI the screen shows: [id] null means creating a new POI at [lat]/[lng]. */
+data class PoiScreenArgs(
+    val type: String?,
+    val id: String?,
+    val lat: Double = 0.0,
+    val lng: Double = 0.0,
+)
+
+open class UnifiedPoiViewModel(
     private val poiRepository: PoiFileRepository,
     private val bulkPoiRepository: BulkPoiRepository,
     private val groupRepository: GroupFileRepository,
     private val osmPoiRepository: OsmPoiRepository,
     private val storageManager: StorageManager,
-    savedStateHandle: SavedStateHandle,
+    args: PoiScreenArgs,
+    /** Opens a photo reference handed to [addPhoto] (Android: content URI; desktop: file path). */
+    private val openPhoto: (String) -> InputStream?,
 ) : ViewModel() {
 
-    private val requestedType = savedStateHandle.get<String>("type")
-    private val requestedId = savedStateHandle.get<String>("id")
-    private val creationLat = savedStateHandle.get<String>("lat")?.toDoubleOrNull() ?: 0.0
-    private val creationLng = savedStateHandle.get<String>("lng")?.toDoubleOrNull() ?: 0.0
+    private val requestedType = args.type
+    private val requestedId = args.id
+    private val creationLat = args.lat
+    private val creationLng = args.lng
 
     private val _state = MutableStateFlow(UnifiedPoiState())
     val state: StateFlow<UnifiedPoiState> = _state.asStateFlow()
@@ -309,12 +312,12 @@ class UnifiedPoiViewModel @Inject constructor(
     fun onNoteChange(value: String) = _state.update { it.copy(draftNote = value) }
     fun onGroupChange(value: String?) = _state.update { it.copy(draftGroupId = value) }
 
-    fun addPhoto(uri: Uri, capturedFile: File? = null) {
+    fun addPhoto(source: String, capturedFile: File? = null) {
         if (!_state.value.isEditing) return
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 val target = File(storageManager.getTempDir(), "poi_photo_${System.currentTimeMillis()}_${UUID.randomUUID()}.jpg")
-                context.contentResolver.openInputStream(uri).use { input ->
+                openPhoto(source).use { input ->
                     requireNotNull(input) { "Photo could not be opened" }
                     target.outputStream().use(input::copyTo)
                 }
