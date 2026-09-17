@@ -1,18 +1,25 @@
+import com.android.build.api.dsl.KotlinMultiplatformAndroidLibraryTarget
+
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
-    alias(libs.plugins.android.kmp.library)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.compose.multiplatform)
 }
 
+// `-PdesktopOnly` builds without the Android target, e.g. on Linux hosts without an Android SDK.
+val desktopOnly = providers.gradleProperty("desktopOnly").isPresent
+if (!desktopOnly) apply(plugin = libs.plugins.android.kmp.library.get().pluginId)
+
 // Compose UI shared by the Android and desktop apps.
 kotlin {
-    android {
-        namespace = "com.mappingsolution.ui.shared"
-        compileSdk = 37
-        minSdk = 26
-        // Required for Compose resources (icons) to be packaged into the APK.
-        androidResources.enable = true
+    if (!desktopOnly) {
+        extensions.configure<KotlinMultiplatformAndroidLibraryTarget>("android") {
+            namespace = "com.mappingsolution.ui.shared"
+            compileSdk = 37
+            minSdk = 26
+            // Required for Compose resources (icons) to be packaged into the APK.
+            androidResources.enable = true
+        }
     }
     jvm("desktop")
     jvmToolchain(17)

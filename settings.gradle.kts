@@ -24,7 +24,8 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "mapping-solution"
-include(":app")
+// `-PdesktopOnly` skips the Android app so desktop packages build without an Android SDK.
+if (!providers.gradleProperty("desktopOnly").isPresent) include(":app")
 include(":shared")
 include(":sharedUi")
 include(":desktopApp")
