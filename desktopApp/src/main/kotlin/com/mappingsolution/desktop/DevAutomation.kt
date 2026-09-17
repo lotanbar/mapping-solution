@@ -24,6 +24,7 @@ import javax.swing.SwingUtilities
  * - `GET /clickFeature?kind=poi|route&name=` → left click on a named POI or route on the map
  * - `GET /type?text=` → types text into the focused Compose text field
  * - `GET /camera?lat=&lng=&zoom=` → moves the map camera
+ * - `GET /importMbtiles?path=` → imports an MBTiles file without the file dialog
  */
 internal object DevAutomation {
     private const val TAG = "DevAutomation"
@@ -35,6 +36,10 @@ internal object DevAutomation {
     /** Set by the map screen: animates the camera to a position. */
     @Volatile
     var cameraMover: ((lat: Double, lng: Double, zoom: Double) -> Unit)? = null
+
+    /** Set by the app: starts an MBTiles import from a local path. */
+    @Volatile
+    var mbtilesImporter: ((path: String) -> Unit)? = null
 
     fun startIfEnabled(window: Window) {
         val port = System.getenv("MS_AUTOMATION_PORT")?.toIntOrNull() ?: return
@@ -110,6 +115,11 @@ internal object DevAutomation {
                 SwingUtilities.invokeAndWait { cameraMover?.invoke(lat, lng, zoom) }
                 respond(exchange, "camera moving to $lat,$lng z$zoom")
             }
+        }
+        server.createContext("/importMbtiles") { exchange ->
+            val path = parseQuery(exchange.requestURI.rawQuery)["path"].orEmpty()
+            mbtilesImporter?.invoke(path)
+            respond(exchange, "importing $path")
         }
         server.start()
         AppLog.i(TAG, "Automation listening on http://localhost:$port")

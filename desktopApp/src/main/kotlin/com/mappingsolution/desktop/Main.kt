@@ -31,6 +31,7 @@ fun main() = application {
                 window.isAutoRequestFocus = false
                 window.toBack()
             }
+            DevAutomation.mbtilesImporter = container.libraryJobs::importMbtiles
             DevAutomation.startIfEnabled(window)
         }
         ProvideMapPresentationHost(host = rememberAwtComposeMapPresentationHost(window)) {

@@ -65,13 +65,18 @@ import org.maplibre.compose.layers.Anchor
 import org.maplibre.compose.layers.FeaturesClickHandler
 import org.maplibre.compose.layers.HillshadeLayer
 import org.maplibre.compose.layers.LineLayer
+import org.maplibre.compose.layers.RasterLayer
 import org.maplibre.compose.layers.SymbolLayer
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.rememberMapState
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.GeoJsonSource
 import org.maplibre.compose.sources.rememberGeoJsonSource
+import org.maplibre.compose.sources.TileSetOptions
+import org.maplibre.compose.sources.rememberMbtilesUrl
 import org.maplibre.compose.sources.rememberRasterDemTileSource
+import org.maplibre.compose.sources.rememberRasterTileSource
+import java.io.File
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.spatialk.geojson.Position
 
@@ -107,6 +112,7 @@ internal fun MapScreen(
     // Shared with the library screen, which can change both too.
     val style by container.mapLayersState.mapStyle.collectAsState()
     val hillshade by container.mapLayersState.hillshadeVisible.collectAsState()
+    val rasterLayers by container.mapLayersState.rasterLayers.collectAsState()
     var selection by remember { mutableStateOf<Selection?>(null) }
 
     val personalMarkers = remember(pois, groups) { MapGeoJson.personalPois(pois, groups) }
@@ -166,6 +172,19 @@ internal fun MapScreen(
                 highlightColor = const(Color(1f, 1f, 1f, 0.15f)),
                 accentColor = const(Color(100 / 255f, 100 / 255f, 100 / 255f, 0.2f)),
             )
+        }
+        // Imported MBTiles overlays: above hillshade, below routes and markers (as on Android).
+        rasterLayers.forEach { layer ->
+            key(layer.id) {
+                val url by rememberMbtilesUrl(File(layer.filePath).toURI().toString())
+                url?.let { mbtiles ->
+                    val source = rememberRasterTileSource(
+                        tiles = listOf(mbtiles),
+                        options = TileSetOptions(minZoom = layer.minZoom, maxZoom = layer.maxZoom),
+                    )
+                    RasterLayer(id = "raster-layer-${layer.id}", source = source, visible = layer.isVisible)
+                }
+            }
         }
         LineLayer(
             id = "saved-routes-lines",
