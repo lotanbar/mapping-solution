@@ -136,7 +136,7 @@ internal fun MapScreen(
         baseStyle = loadedStyle?.baseStyle ?: BaseStyle.Json(EMPTY_STYLE),
         initialCameraPosition = remember {
             container.viewportPreference.load()?.let {
-                CameraPosition(target = Position(it.lng, it.lat), zoom = it.zoom, bearing = it.bearing, tilt = it.tilt)
+                CameraPosition(target = Position(it.lng, it.lat), zoom = it.zoom, bearing = it.bearing)
             } ?: CameraPosition(target = Position(35.0, 31.5), zoom = 7.0)
         },
     ) {
@@ -346,6 +346,8 @@ internal fun MapScreen(
             modifier = Modifier.fillMaxSize(),
             state = mapState,
             interactions = MapInteractions(MapInteractions.Standard) {
+                // Flat 2D only: right-drag rotates without tilting the map.
+                camera { tilt { enabled = false } }
                 callbacks {
                     click { onUnhandled { event -> AppLog.d(TAG, "Map click"); onBackgroundClick(event.screenOffset); ClickResult.Consume } }
                     doubleClick { onEvent { AppLog.d(TAG, "Map double-click"); goToMyLocation(); ClickResult.Consume } }
