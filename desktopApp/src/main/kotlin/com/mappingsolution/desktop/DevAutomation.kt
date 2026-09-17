@@ -6,6 +6,7 @@ import com.sun.net.httpserver.HttpServer
 import java.awt.Component
 import java.awt.Toolkit
 import java.awt.Window
+import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -21,6 +22,7 @@ import javax.swing.SwingUtilities
  * - `GET /info` → window size in AWT units and the display scale
  * - `GET /click?x=&y=` → left click at content-pane coordinates (AWT units)
  * - `GET /clickFeature?kind=poi|route&name=` → left click on a named POI or route on the map
+ * - `GET /type?text=` → types text into the focused Compose text field
  */
 internal object DevAutomation {
     private const val TAG = "DevAutomation"
@@ -77,6 +79,20 @@ internal object DevAutomation {
                 Thread.sleep(300)
                 respond(exchange, "clicked ${query["kind"]} '${query["name"]}' at $x,$y")
             }
+        }
+        server.createContext("/type") { exchange ->
+            val text = parseQuery(exchange.requestURI.rawQuery)["text"].orEmpty()
+            SwingUtilities.invokeAndWait {
+                val target = SwingUtilities.getDeepestComponentAt(rootComponent(window), 1, 1) ?: rootComponent(window)
+                val queue = Toolkit.getDefaultToolkit().systemEventQueue
+                text.forEach { char ->
+                    queue.postEvent(
+                        KeyEvent(target, KeyEvent.KEY_TYPED, System.currentTimeMillis(), 0, KeyEvent.VK_UNDEFINED, char)
+                    )
+                }
+            }
+            Thread.sleep(300)
+            respond(exchange, "typed ${text.length} chars")
         }
         server.start()
         AppLog.i(TAG, "Automation listening on http://localhost:$port")

@@ -68,7 +68,12 @@ private sealed interface Selection {
 
 @OptIn(FlowPreview::class)
 @Composable
-internal fun MapScreen(container: AppContainer, onOpenLibrary: () -> Unit, onOpenPoi: (String) -> Unit) {
+internal fun MapScreen(
+    container: AppContainer,
+    onOpenLibrary: () -> Unit,
+    onOpenSearch: () -> Unit,
+    onOpenPoi: (String) -> Unit,
+) {
     val groups by container.groupRepository.observeAll().collectAsState(emptyList())
     val pois by container.poiRepository.observeAll().collectAsState(emptyList())
     val routes by container.routeRepository.observeAll().collectAsState(emptyList())
@@ -193,7 +198,10 @@ internal fun MapScreen(container: AppContainer, onOpenLibrary: () -> Unit, onOpe
                     "${pois.size} POIs · ${routes.size} routes · ${groups.size} groups",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                Button(onClick = onOpenLibrary) { Text("Library") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onOpenLibrary) { Text("Library") }
+                    Button(onClick = onOpenSearch) { Text("Search & Plan") }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     MapStyle.entries.forEach { option ->
                         FilterChip(

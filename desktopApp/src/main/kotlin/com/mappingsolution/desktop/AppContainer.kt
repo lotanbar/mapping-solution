@@ -9,6 +9,7 @@ import com.mappingsolution.data.fs.PoiFileRepository
 import com.mappingsolution.data.fs.RasterLayerRepository
 import com.mappingsolution.data.fs.RouteFileRepository
 import com.mappingsolution.data.map.MapLayersState
+import com.mappingsolution.data.map.SearchPreviewState
 import com.mappingsolution.data.places.OsmApiService
 import com.mappingsolution.data.places.OsmPoiCache
 import com.mappingsolution.data.places.OsmPoiRepository
@@ -17,6 +18,7 @@ import com.mappingsolution.data.prefs.HillshadePreference
 import com.mappingsolution.data.prefs.MapStylePreference
 import com.mappingsolution.data.prefs.ViewportPreference
 import com.mappingsolution.data.recording.RecordingRepository
+import com.mappingsolution.data.search.SearchRepository
 import com.mappingsolution.data.recording.processing.OsmRoadCache
 import com.mappingsolution.data.util.ApiKeys
 import com.mappingsolution.data.util.AppLog
@@ -24,6 +26,7 @@ import com.mappingsolution.data.util.StorageManager
 import com.mappingsolution.ui.library.GroupFormViewModel
 import com.mappingsolution.ui.library.LibraryViewModel
 import com.mappingsolution.ui.recording.RouteFinalizeViewModel
+import com.mappingsolution.ui.searchnplan.SearchNPlanViewModel
 import com.mappingsolution.ui.poi.PoiScreenArgs
 import com.mappingsolution.ui.poi.UnifiedPoiViewModel
 import okhttp3.OkHttpClient
@@ -54,7 +57,10 @@ internal class AppContainer {
     val exportRepository = ExportRepository(File(DesktopPaths.dataDir, "exports"), poiRepository, routeRepository)
     val importRepository = ImportRepository(groupRepository, poiRepository, routeRepository, storageManager)
     val wikimediaRepository = WikimediaRepository(storageManager, httpClient, apiKeys)
-    val osmPoiRepository = OsmPoiRepository(OsmApiService(httpClient), OsmPoiCache(storageManager), wikimediaRepository)
+    private val osmApiService = OsmApiService(httpClient)
+    val osmPoiRepository = OsmPoiRepository(osmApiService, OsmPoiCache(storageManager), wikimediaRepository)
+    val searchRepository = SearchRepository(poiRepository, bulkPoiRepository, groupRepository, osmApiService)
+    val searchPreviewState = SearchPreviewState()
     val recordingRepository = RecordingRepository(routeRepository, OsmRoadCache(httpClient))
 
     val mapStylePreference = MapStylePreference(stores)
@@ -77,6 +83,18 @@ internal class AppContainer {
     fun newGroupFormViewModel(groupId: String?) = GroupFormViewModel(groupRepository, groupId)
 
     fun newRouteFinalizeViewModel() = RouteFinalizeViewModel(routeRepository, libraryJobs)
+
+    /** Live search screens by navigation instance, so POI details can add destinations to them. */
+    val searchViewModels = mutableMapOf<Long, SearchNPlanViewModel>()
+
+    fun newSearchViewModel(planId: String?) = SearchNPlanViewModel(
+        searchRepository = searchRepository,
+        planRepository = planRepository,
+        loadCamera = viewportPreference::load,
+        searchPreviewState = searchPreviewState,
+        osmPoiRepository = osmPoiRepository,
+        loadedPlanId = planId,
+    )
 
     fun newLibraryViewModel() = LibraryViewModel(
         groupRepository, poiRepository, routeRepository, planRepository, exportRepository,

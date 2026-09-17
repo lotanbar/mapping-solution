@@ -10,6 +10,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -26,9 +27,11 @@ import com.mappingsolution.ui.image.ZipImageFetcher
 import com.mappingsolution.ui.library.GroupFormScreen
 import com.mappingsolution.ui.library.IconPickerScreen
 import com.mappingsolution.ui.library.LibraryScreen
+import com.mappingsolution.data.model.PlanDestination
 import com.mappingsolution.ui.poi.PoiScreenArgs
 import com.mappingsolution.ui.poi.UnifiedPoiScreen
 import com.mappingsolution.ui.recording.RouteFinalizeScreen
+import com.mappingsolution.ui.searchnplan.SearchNPlanScreen
 import kotlinx.coroutines.launch
 import java.awt.Desktop
 import java.io.File
@@ -36,7 +39,9 @@ import java.io.File
 internal sealed interface Screen {
     data object Map : Screen
     data object Library : Screen
-    data class PoiDetail(val args: PoiScreenArgs) : Screen
+    /** [fromSearch] is set when "Add to plan" should return the POI to that search screen. */
+    data class PoiDetail(val args: PoiScreenArgs, val fromSearch: Search? = null) : Screen
+    data class Search(val planId: String?, val instance: Long = System.nanoTime()) : Screen
     /** [instance] keeps each visit's ViewModel separate while the icon picker sits on top. */
     data class GroupForm(val groupId: String?, val instance: Long = System.nanoTime()) : Screen
     data class IconPicker(val form: GroupForm, val currentIconKey: String) : Screen
@@ -68,6 +73,7 @@ internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
             Screen.Map -> MapScreen(
                 container,
                 onOpenLibrary = { navigate(Screen.Library) },
+                onOpenSearch = { navigate(Screen.Search(planId = null)) },
                 onOpenPoi = { poiId -> navigate(Screen.PoiDetail(PoiScreenArgs(type = "poi", id = poiId))) },
             )
             Screen.Library -> DesktopLibraryScreen(
@@ -77,6 +83,7 @@ internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
                 onCreateGroup = { navigate(Screen.GroupForm(groupId = null)) },
                 onEditGroup = { groupId -> navigate(Screen.GroupForm(groupId)) },
                 onEditRoute = { routeId -> navigate(Screen.RouteEdit(routeId)) },
+                onOpenPlan = { planId -> navigate(Screen.Search(planId)) },
                 onUnsupported = unsupported,
                 showMessage = showMessage,
             )
@@ -116,8 +123,32 @@ internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
                 container = container,
                 args = screen.args,
                 onNavigateBack = goBack,
+                onAddToPlan = screen.fromSearch?.let { search ->
+                    { destination ->
+                        container.searchViewModels[search.instance]?.addDestinationFromDetail(destination)
+                        goBack()
+                    }
+                },
                 onUnsupported = unsupported,
             )
+            is Screen.Search -> {
+                val uriHandler = LocalUriHandler.current
+                val viewModel = viewModel(key = "search-${screen.instance}") {
+                    container.newSearchViewModel(screen.planId).also { container.searchViewModels[screen.instance] = it }
+                }
+                LaunchedEffect(viewModel) {
+                    viewModel.results.collect { results ->
+                        if (results.isNotEmpty()) AppLog.d("DesktopApp", "Search results: ${results.joinToString { it.poi.name }}")
+                    }
+                }
+                SearchNPlanScreen(
+                    onNavigateBack = goBack,
+                    onOpenDetail = { type, id -> navigate(Screen.PoiDetail(PoiScreenArgs(type = type, id = id), fromSearch = screen)) },
+                    viewModel = viewModel,
+                    onNavigateTo = { lat, lng -> uriHandler.openUri(googleMapsDirections(listOf(lat to lng))) },
+                    onNavigateAll = { destinations -> uriHandler.openUri(googleMapsDirections(destinations.map { it.lat to it.lng })) },
+                )
+            }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp)) { Snackbar(it) }
     }
@@ -128,6 +159,7 @@ private fun FrameWindowScope.DesktopPoiScreen(
     container: AppContainer,
     args: PoiScreenArgs,
     onNavigateBack: () -> Unit,
+    onAddToPlan: ((PlanDestination) -> Unit)?,
     onUnsupported: () -> Unit,
 ) {
     val viewModel = viewModel(key = args.toString()) { container.newPoiViewModel(args) }
@@ -142,9 +174,9 @@ private fun FrameWindowScope.DesktopPoiScreen(
                 else -> runCatching { Desktop.getDesktop().open(File(path)) }.onFailure { onUnsupported() }
             }
         },
-        onAddToPlan = { onUnsupported() },
+        onAddToPlan = onAddToPlan ?: { onUnsupported() },
         viewModel = viewModel,
-        onNavigateTo = { lat, lng -> uriHandler.openUri("https://www.google.com/maps/dir/?api=1&destination=$lat,$lng") },
+        onNavigateTo = { lat, lng -> uriHandler.openUri(googleMapsDirections(listOf(lat to lng))) },
         onAddPhoto = {
             FileDialogs.openFile(window, "Add photo", setOf("jpg", "jpeg", "png", "webp", "avif", "heic"))?.let {
                 viewModel.addPhoto(it.absolutePath)
@@ -163,6 +195,7 @@ private fun FrameWindowScope.DesktopLibraryScreen(
     onCreateGroup: () -> Unit,
     onEditGroup: (String) -> Unit,
     onEditRoute: (String) -> Unit,
+    onOpenPlan: (String) -> Unit,
     onUnsupported: () -> Unit,
     showMessage: (String) -> Unit,
 ) {
@@ -198,7 +231,7 @@ private fun FrameWindowScope.DesktopLibraryScreen(
         onEditGroup = onEditGroup,
         onEditPoi = onEditPoi,
         onEditRoute = onEditRoute,
-        onOpenPlan = { onUnsupported() },
+        onOpenPlan = onOpenPlan,
         onContinueRecording = { onUnsupported() },
         viewModel = viewModel,
         onImportGpx = { askImportSource = true },
@@ -217,4 +250,12 @@ private fun FrameWindowScope.DesktopLibraryScreen(
         onShowMessage = showMessage,
         showBackButton = true,
     )
+}
+
+/** Google Maps directions through [stops] in order (the last one is the destination). */
+private fun googleMapsDirections(stops: List<Pair<Double, Double>>): String {
+    val destination = stops.last().let { (lat, lng) -> "$lat,$lng" }
+    val waypoints = stops.dropLast(1).joinToString("|") { (lat, lng) -> "$lat,$lng" }
+    return "https://www.google.com/maps/dir/?api=1&destination=$destination" +
+        if (waypoints.isNotEmpty()) "&waypoints=$waypoints" else ""
 }
