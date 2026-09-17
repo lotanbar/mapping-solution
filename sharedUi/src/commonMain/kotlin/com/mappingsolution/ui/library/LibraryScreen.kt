@@ -25,6 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -116,6 +117,8 @@ fun LibraryScreen(
     onShareExport: (File) -> Unit,
     /** Shows a brief transient message (Android: toast). */
     onShowMessage: (String) -> Unit,
+    /** Platforms without a system back gesture (desktop) show an explicit back button. */
+    showBackButton: Boolean = false,
 ) {
     val searchQuery by viewModel.searchQuery.collectAsState()
     val filteredPoiGroups by viewModel.filteredPoiGroups.collectAsState()
@@ -265,6 +268,11 @@ fun LibraryScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
+                            if (showBackButton) {
+                                IconButton(onClick = onNavigateBack) {
+                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                                }
+                            }
                             Box(
                                 modifier = Modifier
                                     .weight(1f)

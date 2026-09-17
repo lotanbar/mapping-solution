@@ -32,7 +32,7 @@ fun main() = application {
         }
         ProvideMapPresentationHost(host = rememberAwtComposeMapPresentationHost(window)) {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                MapScreen(container)
+                DesktopApp(container)
             }
         }
     }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -67,7 +68,7 @@ private sealed interface Selection {
 
 @OptIn(FlowPreview::class)
 @Composable
-internal fun MapScreen(container: AppContainer) {
+internal fun MapScreen(container: AppContainer, onOpenLibrary: () -> Unit) {
     val groups by container.groupRepository.observeAll().collectAsState(emptyList())
     val pois by container.poiRepository.observeAll().collectAsState(emptyList())
     val routes by container.routeRepository.observeAll().collectAsState(emptyList())
@@ -75,8 +76,9 @@ internal fun MapScreen(container: AppContainer) {
         value = routes.filter { it.didUserTapStop }.associate { it.id to container.routeRepository.getPoints(it.id) }
     }
 
-    var style by remember { mutableStateOf(container.mapStylePreference.load()) }
-    var hillshade by remember { mutableStateOf(container.hillshadePreference.load()) }
+    // Shared with the library screen, which can change both too.
+    val style by container.mapLayersState.mapStyle.collectAsState()
+    val hillshade by container.mapLayersState.hillshadeVisible.collectAsState()
     var selection by remember { mutableStateOf<Selection?>(null) }
 
     val poisJson = remember(pois, groups) { MapGeoJson.pois(pois, groups) }
@@ -191,24 +193,19 @@ internal fun MapScreen(container: AppContainer) {
                     "${pois.size} POIs · ${routes.size} routes · ${groups.size} groups",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                Button(onClick = onOpenLibrary) { Text("Library") }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     MapStyle.entries.forEach { option ->
                         FilterChip(
                             selected = style == option,
-                            onClick = {
-                                style = option
-                                container.mapStylePreference.save(option)
-                            },
+                            onClick = { container.mapLayersState.setMapStyle(option) },
                             label = { Text(if (option == MapStyle.SATELLITE) "Satellite" else "Topo dark") },
                         )
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Hillshading", Modifier.weight(1f))
-                    Switch(checked = hillshade, onCheckedChange = {
-                        hillshade = it
-                        container.hillshadePreference.save(it)
-                    })
+                    Switch(checked = hillshade, onCheckedChange = container.mapLayersState::setHillshadeVisible)
                 }
                 when (val selected = selection) {
                     is Selection.PoiSelection -> SelectionDetails(

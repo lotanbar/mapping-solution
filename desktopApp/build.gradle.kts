@@ -35,6 +35,8 @@ dependencies {
     // Android provides these in the platform; the desktop JVM needs real implementations.
     implementation(libs.org.json)
     runtimeOnly(libs.kxml2)
+    // Reads MBTiles metadata on import.
+    implementation("org.xerial:sqlite-jdbc:3.53.4.0")
 }
 
 val generateBuildConfig by tasks.registering {
@@ -72,7 +74,7 @@ compose.desktop {
             targetFormats(TargetFormat.Msi, TargetFormat.Deb, TargetFormat.Rpm)
             packageName = "MappingSolution"
             packageVersion = "1.0.0"
-            modules("java.prefs", "java.net.http", "jdk.crypto.ec")
+            modules("java.prefs", "java.net.http", "java.sql", "jdk.crypto.ec", "jdk.httpserver")
         }
     }
 }
