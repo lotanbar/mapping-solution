@@ -24,6 +24,7 @@ import javax.swing.SwingUtilities
  * - `GET /clickFeature?kind=poi|route&name=` → left click on a named POI or route on the map
  * - `GET /type?text=` → types text into the focused Compose text field
  * - `GET /camera?lat=&lng=&zoom=` → moves the map camera
+ * - `GET /doubleClick?x=&y=` → left double click at content-pane coordinates
  * - `GET /locate` → same as double-clicking the map: flies to the computer's location
  * - `GET /drag?x1=&y1=&x2=&y2=&button=1|3` → drags between two points with a mouse button
  * - `GET /importMbtiles?path=` → imports an MBTiles file without the file dialog
@@ -126,6 +127,16 @@ internal object DevAutomation {
                 respond(exchange, "camera moving to $lat,$lng z$zoom")
             }
         }
+        server.createContext("/doubleClick") { exchange ->
+            val query = parseQuery(exchange.requestURI.rawQuery)
+            val x = query["x"]?.toIntOrNull() ?: 0
+            val y = query["y"]?.toIntOrNull() ?: 0
+            SwingUtilities.invokeAndWait { click(rootComponent(window), x, y, clickCount = 1) }
+            Thread.sleep(120)
+            SwingUtilities.invokeAndWait { click(rootComponent(window), x, y, clickCount = 2) }
+            Thread.sleep(300)
+            respond(exchange, "double-clicked $x,$y")
+        }
         server.createContext("/locate") { exchange ->
             SwingUtilities.invokeAndWait { locator?.invoke() }
             respond(exchange, "locating")
@@ -166,7 +177,7 @@ internal object DevAutomation {
     private fun rootComponent(window: Window): Component =
         (window as? javax.swing.RootPaneContainer)?.contentPane ?: window
 
-    private fun click(root: Component, x: Int, y: Int): String {
+    private fun click(root: Component, x: Int, y: Int, clickCount: Int = 1): String {
         val target = SwingUtilities.getDeepestComponentAt(root, x, y) ?: root
         val point = SwingUtilities.convertPoint(root, x, y, target)
         val queue = Toolkit.getDefaultToolkit().systemEventQueue
@@ -176,9 +187,9 @@ internal object DevAutomation {
         )
         post(MouseEvent.MOUSE_ENTERED, now, 0, 0, MouseEvent.NOBUTTON)
         post(MouseEvent.MOUSE_MOVED, now, 0, 0, MouseEvent.NOBUTTON)
-        post(MouseEvent.MOUSE_PRESSED, now + 10, MouseEvent.BUTTON1_DOWN_MASK, 1, MouseEvent.BUTTON1)
-        post(MouseEvent.MOUSE_RELEASED, now + 60, 0, 1, MouseEvent.BUTTON1)
-        post(MouseEvent.MOUSE_CLICKED, now + 60, 0, 1, MouseEvent.BUTTON1)
+        post(MouseEvent.MOUSE_PRESSED, now + 10, MouseEvent.BUTTON1_DOWN_MASK, clickCount, MouseEvent.BUTTON1)
+        post(MouseEvent.MOUSE_RELEASED, now + 60, 0, clickCount, MouseEvent.BUTTON1)
+        post(MouseEvent.MOUSE_CLICKED, now + 60, 0, clickCount, MouseEvent.BUTTON1)
         return target.javaClass.name
     }
 

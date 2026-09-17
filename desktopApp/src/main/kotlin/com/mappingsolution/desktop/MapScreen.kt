@@ -315,6 +315,14 @@ internal fun MapScreen(
 
     /** Double click flies to the computer's location, as double tap does on Android. */
     fun goToMyLocation() {
+        fun flyTo(location: Pair<Double, Double>) = scope.launch {
+            val current = mapState.cameraPosition
+            mapState.animateCameraPosition(
+                current.copy(target = Position(location.second, location.first), zoom = maxOf(current.zoom, CURRENT_LOCATION_ZOOM)),
+            )
+        }
+        // The OS lookup takes a few seconds: jump to the last fix straight away, then refine.
+        myLocation?.let(::flyTo) ?: showMessage("Finding your location…")
         if (locating) return
         locating = true
         scope.launch {
@@ -324,11 +332,9 @@ internal fun MapScreen(
                 showMessage("Couldn't get your location. Check that location services are on.")
                 return@launch
             }
+            val moved = location != myLocation
             myLocation = location
-            val current = mapState.cameraPosition
-            mapState.animateCameraPosition(
-                current.copy(target = Position(location.second, location.first), zoom = maxOf(current.zoom, CURRENT_LOCATION_ZOOM)),
-            )
+            if (moved) flyTo(location)
         }
     }
     DevAutomation.locator = ::goToMyLocation
@@ -341,8 +347,8 @@ internal fun MapScreen(
             state = mapState,
             interactions = MapInteractions(MapInteractions.Standard) {
                 callbacks {
-                    click { onUnhandled { event -> onBackgroundClick(event.screenOffset); ClickResult.Consume } }
-                    doubleClick { onEvent { goToMyLocation(); ClickResult.Consume } }
+                    click { onUnhandled { event -> AppLog.d(TAG, "Map click"); onBackgroundClick(event.screenOffset); ClickResult.Consume } }
+                    doubleClick { onEvent { AppLog.d(TAG, "Map double-click"); goToMyLocation(); ClickResult.Consume } }
                 }
             },
         )

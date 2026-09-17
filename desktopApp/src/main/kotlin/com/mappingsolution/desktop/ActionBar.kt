@@ -1,5 +1,9 @@
 package com.mappingsolution.desktop
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.TooltipPlacement
@@ -15,9 +19,11 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -37,14 +43,25 @@ internal enum class PanelSection { Library, Search, NewPoi }
 @Composable
 internal fun ActionBar(
     active: PanelSection?,
+    /** When open, the bar becomes the top of the panel: same color and square corners. */
+    panelOpen: Boolean,
     onClick: (PanelSection) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val animation = tween<Color>(PANEL_ANIMATION_MS, easing = FastOutSlowInEasing)
+    val color by animateColorAsState(
+        if (panelOpen) MaterialTheme.colorScheme.background else Color.Black.copy(alpha = 0.6f),
+        animation,
+    )
+    val corner by animateDpAsState(
+        if (panelOpen) 0.dp else 28.dp,
+        tween(PANEL_ANIMATION_MS, easing = FastOutSlowInEasing),
+    )
     Surface(
         modifier = modifier,
         // Flush with the window corner; only the inner corner is rounded.
-        shape = RoundedCornerShape(bottomEnd = 28.dp),
-        color = Color.Black.copy(alpha = 0.6f),
+        shape = RoundedCornerShape(bottomEnd = corner),
+        color = color,
     ) {
         Row {
             ActionButton(Icons.Default.AddLocation, "New POI at map center", active == PanelSection.NewPoi) {

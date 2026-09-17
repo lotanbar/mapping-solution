@@ -1,5 +1,10 @@
 package com.mappingsolution.desktop
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -78,6 +83,7 @@ internal sealed interface Screen {
 private const val PANEL_WIDTH_FRACTION = 0.3f
 private val PANEL_MIN_WIDTH = 360.dp
 private val RESIZE_HANDLE_WIDTH = 6.dp
+internal const val PANEL_ANIMATION_MS = 180
 
 @Composable
 internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
@@ -148,7 +154,15 @@ internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
             showMessage = showMessage,
             modifier = Modifier.fillMaxSize(),
         )
-        panelStack.lastOrNull()?.let { screen ->
+        // Keeps the last screen on show while the panel slides out.
+        var shownScreen by remember { mutableStateOf<Screen?>(null) }
+        panelStack.lastOrNull()?.let { shownScreen = it }
+        AnimatedVisibility(
+            visible = panelOpen,
+            enter = slideInHorizontally(tween(PANEL_ANIMATION_MS, easing = FastOutSlowInEasing)) { -it },
+            exit = slideOutHorizontally(tween(PANEL_ANIMATION_MS, easing = FastOutSlowInEasing)) { -it },
+        ) {
+            val screen = shownScreen ?: return@AnimatedVisibility
             Row(Modifier.fillMaxHeight()) {
                 Surface(
                     modifier = Modifier.width(panelWidth).fillMaxHeight(),
@@ -175,6 +189,7 @@ internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
         ) { Snackbar(it) }
         ActionBar(
             active = activeSection,
+            panelOpen = panelOpen,
             onClick = { section ->
                 when {
                     // Pressing the open section's button again closes the panel.
