@@ -27,6 +27,40 @@ Nearby street photos and ambiguous name-only matches are deliberately excluded.
 
 ---
 
+## Desktop app (Windows & Linux)
+
+A viewer/editor for the same data (no live GPS recording), built with Compose Multiplatform and
+[maplibre-compose](https://github.com/maplibre/maplibre-compose). It covers the map, library,
+POI details/editing, groups, route details/editing, search & plan, GPX/ZIP/MBTiles import and GPX export.
+
+### Modules
+
+| Module | Contents |
+|---|---|
+| `:shared` | Plain Kotlin/JVM data layer: models, file repositories, import/export, OSM/Wikimedia, track processing |
+| `:sharedUi` | Compose Multiplatform UI shared by both apps: screens, ViewModels, icons, image loading |
+| `:app` | Android app: map, recording service, WorkManager jobs, Hilt wiring, permission/camera hosts |
+| `:desktopApp` | Desktop app: map screen, navigation, native file dialogs, background jobs |
+
+### Running and packaging
+
+The desktop map runtime needs **JDK 25** and a **Vulkan** driver; Gradle downloads the JDK automatically.
+
+```bash
+./gradlew :desktopApp:run                                # run from source
+./gradlew -PdesktopOnly :desktopApp:packageMsi           # Windows installer
+./gradlew -PdesktopOnly :desktopApp:packageDeb :desktopApp:packageRpm  # Linux (run on Linux)
+```
+
+`-PdesktopOnly` skips the Android modules so no Android SDK is needed. Installers can only be built on
+their target OS; `.github/workflows/desktop-packages.yml` builds all of them.
+
+Desktop data lives in `%APPDATA%\MappingSolution` (Windows) or `$XDG_DATA_HOME/MappingSolution`
+(Linux, default `~/.local/share`), using the same folder layout as the Android app, so a copy of the
+phone's `Android/data/com.mappingsolution/files` folder can be opened directly.
+
+---
+
 ## Data Models
 
 ### Group
