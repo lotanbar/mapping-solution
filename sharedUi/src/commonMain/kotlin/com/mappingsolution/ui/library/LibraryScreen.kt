@@ -302,13 +302,6 @@ fun LibraryScreen(
                                                 modifier = Modifier.size(18.dp),
                                             )
                                             Box {
-                                                if (searchQuery.isEmpty()) {
-                                                    Text(
-                                                        "Search groups, POIs, routes…",
-                                                        style = MaterialTheme.typography.bodyLarge,
-                                                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.5f),
-                                                    )
-                                                }
                                                 innerTextField()
                                             }
                                         }

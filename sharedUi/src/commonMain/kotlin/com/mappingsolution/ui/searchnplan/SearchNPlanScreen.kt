@@ -79,6 +79,7 @@ fun SearchNPlanScreen(
     onNavigateTo: (lat: Double, lng: Double) -> Unit,
     /** Starts navigation through all plan destinations in order. */
     onNavigateAll: (List<PlanDestination>) -> Unit,
+    showBackButton: Boolean = true,
 ) {
     val focusManager = LocalFocusManager.current
     val query by viewModel.searchQuery.collectAsState()
@@ -128,8 +129,10 @@ fun SearchNPlanScreen(
                 TopAppBar(
                     title = { Text("Search & Plan") },
                     navigationIcon = {
-                        IconButton(onClick = onNavigateBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        if (showBackButton) {
+                            IconButton(onClick = onNavigateBack) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            }
                         }
                     },
                 )

@@ -24,6 +24,8 @@ import javax.swing.SwingUtilities
  * - `GET /clickFeature?kind=poi|route&name=` → left click on a named POI or route on the map
  * - `GET /type?text=` → types text into the focused Compose text field
  * - `GET /camera?lat=&lng=&zoom=` → moves the map camera
+ * - `GET /locate` → same as double-clicking the map: flies to the computer's location
+ * - `GET /drag?x1=&y1=&x2=&y2=&button=1|3` → drags between two points with a mouse button
  * - `GET /importMbtiles?path=` → imports an MBTiles file without the file dialog
  */
 internal object DevAutomation {
@@ -36,6 +38,10 @@ internal object DevAutomation {
     /** The screen shown in the side panel, or `closed`. */
     @Volatile
     var panelState: String = "closed"
+
+    /** Set by the map screen: flies to the computer's location. */
+    @Volatile
+    var locator: (() -> Unit)? = null
 
     /** Set by the map screen: animates the camera to a position. */
     @Volatile
@@ -119,6 +125,34 @@ internal object DevAutomation {
                 SwingUtilities.invokeAndWait { cameraMover?.invoke(lat, lng, zoom) }
                 respond(exchange, "camera moving to $lat,$lng z$zoom")
             }
+        }
+        server.createContext("/locate") { exchange ->
+            SwingUtilities.invokeAndWait { locator?.invoke() }
+            respond(exchange, "locating")
+        }
+        server.createContext("/drag") { exchange ->
+            val query = parseQuery(exchange.requestURI.rawQuery)
+            val (x1, y1, x2, y2) = listOf("x1", "y1", "x2", "y2").map { query[it]?.toIntOrNull() ?: 0 }
+            val right = query["button"] == "3"
+            val root = rootComponent(window)
+            val queue = Toolkit.getDefaultToolkit().systemEventQueue
+            val button = if (right) MouseEvent.BUTTON3 else MouseEvent.BUTTON1
+            val mask = if (right) MouseEvent.BUTTON3_DOWN_MASK else MouseEvent.BUTTON1_DOWN_MASK
+            var target: Component = root
+            SwingUtilities.invokeAndWait { target = SwingUtilities.getDeepestComponentAt(root, x1, y1) ?: root }
+            fun post(id: Int, x: Int, y: Int, modifiers: Int, clicks: Int, btn: Int) {
+                val p = SwingUtilities.convertPoint(root, x, y, target)
+                queue.postEvent(MouseEvent(target, id, System.currentTimeMillis(), modifiers, p.x, p.y, clicks, false, btn))
+            }
+            post(MouseEvent.MOUSE_MOVED, x1, y1, 0, 0, MouseEvent.NOBUTTON)
+            post(MouseEvent.MOUSE_PRESSED, x1, y1, mask, 1, button)
+            for (step in 1..20) {
+                Thread.sleep(15)
+                post(MouseEvent.MOUSE_DRAGGED, x1 + (x2 - x1) * step / 20, y1 + (y2 - y1) * step / 20, mask, 0, MouseEvent.NOBUTTON)
+            }
+            post(MouseEvent.MOUSE_RELEASED, x2, y2, 0, 1, button)
+            Thread.sleep(300)
+            respond(exchange, "dragged $x1,$y1 -> $x2,$y2")
         }
         server.createContext("/importMbtiles") { exchange ->
             val path = parseQuery(exchange.requestURI.rawQuery)["path"].orEmpty()

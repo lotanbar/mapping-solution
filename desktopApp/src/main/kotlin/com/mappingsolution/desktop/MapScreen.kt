@@ -7,15 +7,23 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import com.mappingsolution.data.map.MapLabelPoiFactory
 import com.mappingsolution.data.map.MapStyle
 import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.model.RoutePoint
@@ -32,6 +40,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import org.maplibre.spatialk.geojson.toJson
 import org.jetbrains.compose.resources.painterResource
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.expressions.ast.Expression
@@ -50,8 +59,10 @@ import org.maplibre.compose.expressions.value.LineCap
 import org.maplibre.compose.expressions.value.LineJoin
 import org.maplibre.compose.expressions.value.SymbolAnchor
 import org.maplibre.compose.interaction.ClickResult
+import org.maplibre.compose.interaction.MapInteractions
 import org.maplibre.compose.layers.Anchor
 import org.maplibre.compose.layers.FeaturesClickHandler
+import org.maplibre.compose.layers.CircleLayer
 import org.maplibre.compose.layers.HillshadeLayer
 import org.maplibre.compose.layers.LineLayer
 import org.maplibre.compose.layers.RasterLayer
@@ -81,9 +92,14 @@ private val BULK_MARKER_SIZE = DpSize(27.dp, 35.dp)
 internal fun MapScreen(
     container: AppContainer,
     mapCenter: MapCenter,
+    /** Width covered by the side panel on the left; "map center" means the center of what's visible. */
+    visibleLeft: Dp,
     /** [type] is the POI screen type: `poi` for stored POIs, `osm_poi` for OpenStreetMap. */
     onOpenPoi: (type: String, id: String) -> Unit,
     onOpenRoute: (routeId: String) -> Unit,
+    /** Clicks on the map that did not hit a POI or route. */
+    onMapClick: () -> Unit,
+    showMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val groups by container.groupRepository.observeAll().collectAsState(emptyList())
@@ -110,12 +126,14 @@ internal fun MapScreen(
     val routesJson = remember(routes, routePoints) { MapGeoJson.routes(routes, routePoints) }
     val mapTilerKey = container.apiKeys.mapTiler
     // Keeps showing the previous style while the next one downloads.
-    val baseStyle by produceState<BaseStyle?>(null, style, mapTilerKey) {
+    val loadedStyle by produceState<LoadedStyle?>(null, style, mapTilerKey) {
         value = withContext(Dispatchers.IO) { loadBaseStyle(style, mapTilerKey) }
     }
+    var myLocation by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var locating by remember { mutableStateOf(false) }
 
     val mapState = rememberMapState(
-        baseStyle = baseStyle ?: BaseStyle.Json(EMPTY_STYLE),
+        baseStyle = loadedStyle?.baseStyle ?: BaseStyle.Json(EMPTY_STYLE),
         initialCameraPosition = remember {
             container.viewportPreference.load()?.let {
                 CameraPosition(target = Position(it.lng, it.lat), zoom = it.zoom, bearing = it.bearing, tilt = it.tilt)
@@ -198,6 +216,17 @@ internal fun MapScreen(
                 ClickResult.Consume
             },
         )
+        myLocation?.let { (lat, lng) ->
+            val locationSource = rememberGeoJsonSource(GeoJsonData.JsonString(MapGeoJson.point(lat, lng)))
+            CircleLayer(
+                id = "my-location",
+                source = locationSource,
+                color = const(Color(0xFF2196F3)),
+                radius = const(7.dp),
+                strokeColor = const(Color.White),
+                strokeWidth = const(2.dp),
+            )
+        }
         MarkerLayer("bulk-poi-symbols", bulkSource, markerImage(BULK_MARKER_SIZE), opacity = 0.6f, onClick = openPoi(bulkMarkers, "poi"))
         MarkerLayer("osm-poi-symbols", osmSource, markerImage(MARKER_SIZE), onClick = openPoi(osmMarkers, "osm_poi"))
         MarkerLayer("poi-symbols", personalSource, markerImage(MARKER_SIZE), onClick = openPoi(personalMarkers, "poi"))
@@ -262,10 +291,67 @@ internal fun MapScreen(
         }
     }
 
-    Box(modifier) {
-        if (baseStyle != null) MaplibreMap(modifier = Modifier.fillMaxSize(), state = mapState)
+    /** Opens a named base-map label (town, peak, park…) the way Android does, else reports a plain map click. */
+    fun onBackgroundClick(offset: DpOffset) {
+        val labelLayers = loadedStyle?.labelLayers.orEmpty()
+        scope.launch {
+            val hitBox = DpRect(offset.x - 12.dp, offset.y - 12.dp, offset.x + 12.dp, offset.y + 12.dp)
+            var poi: Poi? = null
+            for ((layerId, sourceLayer) in labelLayers) {
+                poi = mapState.queryRenderedFeatures(hitBox, setOf(layerId)).firstNotNullOfOrNull { feature ->
+                    MapLabelPoiFactory.fromRenderedFeature(org.maplibre.geojson.Feature.fromJson(feature.toJson()), sourceLayer)
+                }
+                if (poi != null) break
+            }
+            if (poi != null) {
+                AppLog.d(TAG, "Selected map label '${poi.name}'")
+                container.osmPoiRepository.registerTransientPoi(poi)
+                onOpenPoi("osm_poi", poi.id)
+            } else {
+                onMapClick()
+            }
+        }
     }
-    mapCenter.get = { mapState.cameraPosition.target.let { it.latitude to it.longitude } }
+
+    /** Double click flies to the computer's location, as double tap does on Android. */
+    fun goToMyLocation() {
+        if (locating) return
+        locating = true
+        scope.launch {
+            val location = DesktopLocation.current()
+            locating = false
+            if (location == null) {
+                showMessage("Couldn't get your location. Check that location services are on.")
+                return@launch
+            }
+            myLocation = location
+            val current = mapState.cameraPosition
+            mapState.animateCameraPosition(
+                current.copy(target = Position(location.second, location.first), zoom = maxOf(current.zoom, CURRENT_LOCATION_ZOOM)),
+            )
+        }
+    }
+    DevAutomation.locator = ::goToMyLocation
+
+    var mapSize by remember { mutableStateOf(DpSize.Zero) }
+    val density = LocalDensity.current
+    Box(modifier.onSizeChanged { mapSize = with(density) { DpSize(it.width.toDp(), it.height.toDp()) } }) {
+        if (loadedStyle != null) MaplibreMap(
+            modifier = Modifier.fillMaxSize(),
+            state = mapState,
+            interactions = MapInteractions(MapInteractions.Standard) {
+                callbacks {
+                    click { onUnhandled { event -> onBackgroundClick(event.screenOffset); ClickResult.Consume } }
+                    doubleClick { onEvent { goToMyLocation(); ClickResult.Consume } }
+                }
+            },
+        )
+    }
+    mapCenter.get = {
+        val visibleCenter = DpOffset(visibleLeft + (mapSize.width - visibleLeft) / 2, mapSize.height / 2)
+        runCatching { mapState.positionFromScreenLocation(visibleCenter) }.getOrNull()
+            ?.let { it.latitude to it.longitude }
+    }
 }
 
 /** Lets controls outside the map read where the camera currently points. */
@@ -302,6 +388,8 @@ private fun styleUrl(style: MapStyle, key: String): String {
     return "https://api.maptiler.com/maps/$path/style.json?key=$key"
 }
 
+private const val CURRENT_LOCATION_ZOOM = 16.0
+
 private const val EMPTY_STYLE = """{"version":8,"sources":{},"layers":[]}"""
 
 /**
@@ -315,22 +403,34 @@ private val BUILT_IN_TERRAIN_LAYERS = setOf(
     "Contour labels", "Glacier contour labels",
 )
 
+/**
+ * A base style plus its clickable label layers, topmost first, mapped to their vector source layer.
+ * Query results don't say which layer a feature came from, so each label layer is queried alone.
+ */
+private class LoadedStyle(val baseStyle: BaseStyle, val labelLayers: Map<String, String>)
+
 /** Downloads the style without its built-in terrain layers; falls back to the plain URL. */
-private fun loadBaseStyle(style: MapStyle, key: String): BaseStyle {
+private fun loadBaseStyle(style: MapStyle, key: String): LoadedStyle {
     val url = styleUrl(style, key)
     return runCatching {
         val json = JSONObject(URI(url).toURL().readText())
         val layers = json.getJSONArray("layers")
         val kept = JSONArray()
+        val labelLayers = LinkedHashMap<String, String>()
         for (i in 0 until layers.length()) {
             val layer = layers.getJSONObject(i)
-            if (layer.optString("id") !in BUILT_IN_TERRAIN_LAYERS) kept.put(layer)
+            if (layer.optString("id") in BUILT_IN_TERRAIN_LAYERS) continue
+            kept.put(layer)
+            val sourceLayer = layer.optString("source-layer")
+            if (layer.optString("type") == "symbol" && MapLabelPoiFactory.isEligibleLayer(layer.optString("source"), sourceLayer)) {
+                labelLayers[layer.getString("id")] = sourceLayer
+            }
         }
-        AppLog.d(TAG, "Style $style: removed ${layers.length() - kept.length()} built-in terrain layers")
+        AppLog.d(TAG, "Style $style: removed ${layers.length() - kept.length()} built-in terrain layers, ${labelLayers.size} label layers")
         json.put("layers", kept)
-        BaseStyle.Json(json.toString())
+        LoadedStyle(BaseStyle.Json(json.toString()), labelLayers.entries.reversed().associate { it.key to it.value })
     }.getOrElse { error ->
         AppLog.w(TAG, "Could not preprocess style $style, using it as is: $error")
-        BaseStyle.Uri(url)
+        LoadedStyle(BaseStyle.Uri(url), emptyMap())
     }
 }

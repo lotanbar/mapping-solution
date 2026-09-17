@@ -40,6 +40,15 @@ internal object MapGeoJson {
         return osmPois.filterNot { it.id in starredOsmIds }.map { it to markerId(it.iconKey) }
     }
 
+    fun point(lat: Double, lng: Double): String = collection(
+        JSONArray().put(
+            feature(
+                geometry = JSONObject().put("type", "Point").put("coordinates", JSONArray().put(lng).put(lat)),
+                properties = JSONObject(),
+            )
+        )
+    )
+
     fun points(markers: List<Pair<Poi, String>>): String {
         val features = JSONArray()
         for ((poi, icon) in markers) {

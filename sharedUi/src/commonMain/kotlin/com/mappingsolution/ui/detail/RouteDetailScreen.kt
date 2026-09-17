@@ -52,6 +52,7 @@ fun RouteDetailScreen(
     onNavigateBack: () -> Unit,
     onNavigateToEdit: (String) -> Unit,
     viewModel: RouteDetailViewModel,
+    showBackButton: Boolean = true,
 ) {
     val state by viewModel.state.collectAsState()
     var confirmRemove by remember { mutableStateOf(false) }
@@ -75,8 +76,10 @@ fun RouteDetailScreen(
             TopAppBar(
                 title = { Text(state.route?.name.orEmpty()) },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    if (showBackButton) {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
                     }
                 },
             )

@@ -1,5 +1,9 @@
 package com.mappingsolution.desktop
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -34,7 +38,12 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import java.awt.Cursor
 import androidx.compose.ui.window.FrameWindowScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mappingsolution.data.util.AppLog
@@ -68,6 +77,7 @@ internal sealed interface Screen {
 /** Share of the window the side panel takes; phone-shaped screens need at least [PANEL_MIN_WIDTH]. */
 private const val PANEL_WIDTH_FRACTION = 0.3f
 private val PANEL_MIN_WIDTH = 360.dp
+private val RESIZE_HANDLE_WIDTH = 6.dp
 
 @Composable
 internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
@@ -100,6 +110,8 @@ internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
     }
     val unsupported = { showMessage("Not available on desktop yet") }
     val mapCenter = remember { MapCenter() }
+    /** Width the user dragged the panel to; null keeps the default. */
+    var dragWidth by remember { mutableStateOf<Dp?>(null) }
 
     BoxWithConstraints(
         Modifier.fillMaxSize().onPreviewKeyEvent { event ->
@@ -107,15 +119,37 @@ internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
                 .also { if (it) goBack() }
         },
     ) {
-        val panelWidth = (maxWidth * PANEL_WIDTH_FRACTION).coerceAtLeast(PANEL_MIN_WIDTH)
+        val minPanelWidth = (maxWidth * PANEL_WIDTH_FRACTION).coerceAtLeast(PANEL_MIN_WIDTH).coerceAtMost(maxWidth)
+        // At its widest the panel fills the window, leaving just the resize handle.
+        val maxPanelWidth = (maxWidth - RESIZE_HANDLE_WIDTH).coerceAtLeast(minPanelWidth)
+        val panelWidth = (dragWidth ?: minPanelWidth).coerceIn(minPanelWidth, maxPanelWidth)
         val activeSection = when (val root = panelStack.firstOrNull()) {
             Screen.Library -> PanelSection.Library
             is Screen.Search -> PanelSection.Search
             is Screen.PoiDetail -> PanelSection.NewPoi.takeIf { root.args.id == null }
             else -> null
         }
-        Row(Modifier.fillMaxSize()) {
-            panelStack.lastOrNull()?.let { screen ->
+        val panelOpen = panelStack.isNotEmpty()
+        // The map always fills the window and the panel lies over it: MapLibre's Vulkan renderer
+        // garbles the map when its view is narrower than it is tall, so the map is never resized.
+        MapScreen(
+            container,
+            mapCenter = mapCenter,
+            visibleLeft = if (panelOpen) panelWidth + RESIZE_HANDLE_WIDTH else 0.dp,
+            onOpenPoi = { type, id -> open(Screen.PoiDetail(PoiScreenArgs(type = type, id = id))) },
+            onOpenRoute = { routeId -> open(Screen.RouteDetail(routeId)) },
+            // Clicking the map closes the panel, so root screens need no back arrow.
+            onMapClick = {
+                if (panelOpen) {
+                    panelStack = emptyList()
+                    logPanel()
+                }
+            },
+            showMessage = showMessage,
+            modifier = Modifier.fillMaxSize(),
+        )
+        panelStack.lastOrNull()?.let { screen ->
+            Row(Modifier.fillMaxHeight()) {
                 Surface(
                     modifier = Modifier.width(panelWidth).fillMaxHeight(),
                     color = MaterialTheme.colorScheme.background,
@@ -124,23 +158,21 @@ internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
                         // The action bar stays on top of this gap, above the open screen.
                         Spacer(Modifier.height(ACTION_BAR_HEIGHT))
                         Box(Modifier.weight(1f)) {
-                            PanelScreen(container, screen, navigate, goBack, unsupported, showMessage)
+                            PanelScreen(container, screen, panelStack.size > 1, navigate, goBack, unsupported, showMessage)
                         }
                     }
                 }
-                VerticalDivider()
-            }
-            Box(Modifier.weight(1f).fillMaxHeight()) {
-                MapScreen(
-                    container,
-                    mapCenter = mapCenter,
-                    onOpenPoi = { type, id -> open(Screen.PoiDetail(PoiScreenArgs(type = type, id = id))) },
-                    onOpenRoute = { routeId -> open(Screen.RouteDetail(routeId)) },
-                    modifier = Modifier.fillMaxSize(),
+                PanelResizeHandle(
+                    onDrag = { delta -> dragWidth = (panelWidth + delta).coerceIn(minPanelWidth, maxPanelWidth) },
                 )
-                SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp)) { Snackbar(it) }
             }
         }
+        SnackbarHost(
+            snackbar,
+            Modifier
+                .align(Alignment.BottomCenter)
+                .padding(start = if (panelOpen) panelWidth else 0.dp, bottom = 16.dp),
+        ) { Snackbar(it) }
         ActionBar(
             active = activeSection,
             onClick = { section ->
@@ -163,10 +195,32 @@ internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
     }
 }
 
+/** The panel's right edge: drag it to widen the panel up to the whole window. */
+@Composable
+private fun PanelResizeHandle(onDrag: (Dp) -> Unit) {
+    val density = LocalDensity.current
+    Box(
+        Modifier
+            .width(RESIZE_HANDLE_WIDTH)
+            .fillMaxHeight()
+            .background(MaterialTheme.colorScheme.background)
+            .pointerHoverIcon(PointerIcon(Cursor(Cursor.E_RESIZE_CURSOR)))
+            .draggable(
+                orientation = Orientation.Horizontal,
+                state = rememberDraggableState { pixels -> onDrag(with(density) { pixels.toDp() }) },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        VerticalDivider()
+    }
+}
+
 @Composable
 private fun FrameWindowScope.PanelScreen(
     container: AppContainer,
     screen: Screen,
+    /** Screens opened from within the panel keep a back arrow to return to the one below. */
+    showBackButton: Boolean,
     navigate: (Screen) -> Unit,
     goBack: () -> Unit,
     unsupported: () -> Unit,
@@ -183,6 +237,7 @@ private fun FrameWindowScope.PanelScreen(
             onOpenPlan = { planId -> navigate(Screen.Search(planId)) },
             onUnsupported = unsupported,
             showMessage = showMessage,
+            showBackButton = showBackButton,
         )
         is Screen.GroupForm -> {
             val viewModel = viewModel(key = "group-form-${screen.instance}") {
@@ -215,6 +270,7 @@ private fun FrameWindowScope.PanelScreen(
                 onNavigateBack = goBack,
                 onNavigateToEdit = { routeId -> navigate(Screen.RouteEdit(routeId)) },
                 viewModel = viewModel,
+                showBackButton = showBackButton,
             )
         }
         is Screen.RouteEdit -> {
@@ -237,6 +293,7 @@ private fun FrameWindowScope.PanelScreen(
                 }
             },
             onUnsupported = unsupported,
+            showBackButton = showBackButton,
         )
         is Screen.Search -> {
             val uriHandler = LocalUriHandler.current
@@ -254,6 +311,7 @@ private fun FrameWindowScope.PanelScreen(
                 viewModel = viewModel,
                 onNavigateTo = { lat, lng -> uriHandler.openUri(googleMapsDirections(listOf(lat to lng))) },
                 onNavigateAll = { destinations -> uriHandler.openUri(googleMapsDirections(destinations.map { it.lat to it.lng })) },
+                showBackButton = showBackButton,
             )
         }
     }
@@ -266,6 +324,7 @@ private fun FrameWindowScope.DesktopPoiScreen(
     onNavigateBack: () -> Unit,
     onAddToPlan: ((PlanDestination) -> Unit)?,
     onUnsupported: () -> Unit,
+    showBackButton: Boolean,
 ) {
     val viewModel = viewModel(key = args.toString()) { container.newPoiViewModel(args) }
     val uriHandler = LocalUriHandler.current
@@ -288,7 +347,7 @@ private fun FrameWindowScope.DesktopPoiScreen(
             }
         },
         onCreateGroup = onUnsupported,
-        showBackButton = true,
+        showBackButton = showBackButton,
     )
 }
 
@@ -303,6 +362,7 @@ private fun FrameWindowScope.DesktopLibraryScreen(
     onOpenPlan: (String) -> Unit,
     onUnsupported: () -> Unit,
     showMessage: (String) -> Unit,
+    showBackButton: Boolean,
 ) {
     val viewModel = viewModel { container.newLibraryViewModel() }
     var askImportSource by remember { mutableStateOf(false) }
@@ -353,7 +413,7 @@ private fun FrameWindowScope.DesktopLibraryScreen(
             }
         },
         onShowMessage = showMessage,
-        showBackButton = true,
+        showBackButton = showBackButton,
     )
 }
 

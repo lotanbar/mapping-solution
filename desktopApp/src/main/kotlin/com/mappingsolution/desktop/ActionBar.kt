@@ -25,8 +25,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 
-/** Height of [ActionBar] including its padding; the side panel starts below it. */
-internal val ACTION_BAR_HEIGHT = 72.dp
+/** Height of [ActionBar]; the side panel starts below it. */
+internal val ACTION_BAR_HEIGHT = 56.dp
 
 internal enum class PanelSection { Library, Search, NewPoi }
 
@@ -41,8 +41,9 @@ internal fun ActionBar(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = modifier.padding(8.dp),
-        shape = RoundedCornerShape(28.dp),
+        modifier = modifier,
+        // Flush with the window corner; only the inner corner is rounded.
+        shape = RoundedCornerShape(bottomEnd = 28.dp),
         color = Color.Black.copy(alpha = 0.6f),
     ) {
         Row {
