@@ -2,7 +2,6 @@ package com.mappingsolution.desktop
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -12,7 +11,6 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpSize
@@ -82,12 +80,10 @@ private val BULK_MARKER_SIZE = DpSize(27.dp, 35.dp)
 @Composable
 internal fun MapScreen(
     container: AppContainer,
-    onOpenLibrary: () -> Unit,
-    onOpenSearch: () -> Unit,
+    mapCenter: MapCenter,
     /** [type] is the POI screen type: `poi` for stored POIs, `osm_poi` for OpenStreetMap. */
     onOpenPoi: (type: String, id: String) -> Unit,
     onOpenRoute: (routeId: String) -> Unit,
-    onCreatePoi: (lat: Double, lng: Double) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val groups by container.groupRepository.observeAll().collectAsState(emptyList())
@@ -268,17 +264,13 @@ internal fun MapScreen(
 
     Box(modifier) {
         if (baseStyle != null) MaplibreMap(modifier = Modifier.fillMaxSize(), state = mapState)
-        ActionMenu(
-            onOpenLibrary = onOpenLibrary,
-            onOpenSearch = onOpenSearch,
-            onAddPoi = {
-                val target = mapState.cameraPosition.target
-                onCreatePoi(target.latitude, target.longitude)
-            },
-            // Clear of the MapLibre logo in the corner.
-            modifier = Modifier.align(Alignment.BottomStart).padding(start = 16.dp, bottom = 40.dp),
-        )
     }
+    mapCenter.get = { mapState.cameraPosition.target.let { it.latitude to it.longitude } }
+}
+
+/** Lets controls outside the map read where the camera currently points. */
+internal class MapCenter {
+    var get: () -> Pair<Double, Double>? = { null }
 }
 
 @Composable

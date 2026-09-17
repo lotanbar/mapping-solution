@@ -2,9 +2,12 @@ package com.mappingsolution.desktop
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.AlertDialog
@@ -96,6 +99,7 @@ internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
         logPanel()
     }
     val unsupported = { showMessage("Not available on desktop yet") }
+    val mapCenter = remember { MapCenter() }
 
     BoxWithConstraints(
         Modifier.fillMaxSize().onPreviewKeyEvent { event ->
@@ -104,30 +108,58 @@ internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
         },
     ) {
         val panelWidth = (maxWidth * PANEL_WIDTH_FRACTION).coerceAtLeast(PANEL_MIN_WIDTH)
+        val activeSection = when (val root = panelStack.firstOrNull()) {
+            Screen.Library -> PanelSection.Library
+            is Screen.Search -> PanelSection.Search
+            is Screen.PoiDetail -> PanelSection.NewPoi.takeIf { root.args.id == null }
+            else -> null
+        }
         Row(Modifier.fillMaxSize()) {
-            Box(Modifier.weight(1f).fillMaxHeight()) {
-                MapScreen(
-                    container,
-                    onOpenLibrary = { open(Screen.Library) },
-                    onOpenSearch = { open(Screen.Search(planId = null)) },
-                    onOpenPoi = { type, id -> open(Screen.PoiDetail(PoiScreenArgs(type = type, id = id))) },
-                    onOpenRoute = { routeId -> open(Screen.RouteDetail(routeId)) },
-                    // A null ID opens the POI screen in creation mode at the given point.
-                    onCreatePoi = { lat, lng -> open(Screen.PoiDetail(PoiScreenArgs(type = null, id = null, lat = lat, lng = lng))) },
-                    modifier = Modifier.fillMaxSize(),
-                )
-                SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp)) { Snackbar(it) }
-            }
             panelStack.lastOrNull()?.let { screen ->
-                VerticalDivider()
                 Surface(
                     modifier = Modifier.width(panelWidth).fillMaxHeight(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    PanelScreen(container, screen, navigate, goBack, unsupported, showMessage)
+                    Column {
+                        // The action bar stays on top of this gap, above the open screen.
+                        Spacer(Modifier.height(ACTION_BAR_HEIGHT))
+                        Box(Modifier.weight(1f)) {
+                            PanelScreen(container, screen, navigate, goBack, unsupported, showMessage)
+                        }
+                    }
                 }
+                VerticalDivider()
+            }
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                MapScreen(
+                    container,
+                    mapCenter = mapCenter,
+                    onOpenPoi = { type, id -> open(Screen.PoiDetail(PoiScreenArgs(type = type, id = id))) },
+                    onOpenRoute = { routeId -> open(Screen.RouteDetail(routeId)) },
+                    modifier = Modifier.fillMaxSize(),
+                )
+                SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp)) { Snackbar(it) }
             }
         }
+        ActionBar(
+            active = activeSection,
+            onClick = { section ->
+                when {
+                    // Pressing the open section's button again closes the panel.
+                    section == activeSection -> {
+                        panelStack = emptyList()
+                        logPanel()
+                    }
+                    section == PanelSection.Library -> open(Screen.Library)
+                    section == PanelSection.Search -> open(Screen.Search(planId = null))
+                    else -> mapCenter.get()?.let { (lat, lng) ->
+                        // A null ID opens the POI screen in creation mode at the given point.
+                        open(Screen.PoiDetail(PoiScreenArgs(type = null, id = null, lat = lat, lng = lng)))
+                    }
+                }
+            },
+            modifier = Modifier.align(Alignment.TopStart),
+        )
     }
 }
 
