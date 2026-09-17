@@ -98,9 +98,6 @@ dependencies {
     implementation(libs.androidx.hilt.work)
     ksp(libs.androidx.hilt.compiler)
 
-    // Drag-to-reorder for destination list
-    implementation("sh.calvin.reorderable:reorderable:2.4.0")
-
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation("junit:junit:4.13.2")
 }

@@ -54,6 +54,7 @@ import com.mappingsolution.ui.library.GroupFormScreen
 import com.mappingsolution.ui.AndroidGroupFormViewModel
 import com.mappingsolution.ui.AndroidRouteDetailViewModel
 import com.mappingsolution.ui.AndroidRouteFinalizeViewModel
+import com.mappingsolution.ui.AndroidSearchNPlanViewModel
 import com.mappingsolution.ui.library.GroupFormViewModel
 import com.mappingsolution.ui.library.IconPickerScreen
 import com.mappingsolution.ui.library.AndroidLibraryScreen
@@ -113,7 +114,7 @@ fun AppNavGraph() {
 
         composable(ROUTE_MAIN) { backStackEntry ->
             val context = LocalContext.current
-            val searchVm: SearchNPlanViewModel = hiltViewModel(backStackEntry)
+            val searchVm: SearchNPlanViewModel = hiltViewModel<AndroidSearchNPlanViewModel>(backStackEntry)
             var searchSheetOpen by rememberSaveable { mutableStateOf(false) }
             var showSavePlanDialog by remember { mutableStateOf(false) }
             var planNameInput by remember { mutableStateOf("") }
@@ -237,6 +238,8 @@ fun AppNavGraph() {
                             SearchNPlanScreen(
                                 isEmbedded = true,
                                 viewModel = searchVm,
+                                onNavigateTo = { lat, lng -> NavigationIntentHelper.launchSingleNavigation(context, lat, lng) },
+                                onNavigateAll = { NavigationIntentHelper.launchNavigation(context, it) },
                                 onNavigateBack = { dismiss() },
                                 onOpenDetail = { type, id ->
                                     navController.navigate("item_detail/$type/$id?fromSearch=true")
@@ -489,7 +492,7 @@ fun AppNavGraph() {
                 navArgument(KEY_PLAN_ID) { type = NavType.StringType; nullable = true; defaultValue = null },
             ),
         ) { backStackEntry ->
-            val vm: SearchNPlanViewModel = hiltViewModel(backStackEntry)
+            val vm: SearchNPlanViewModel = hiltViewModel<AndroidSearchNPlanViewModel>(backStackEntry)
             val addedDestination = backStackEntry.savedStateHandle
                 .getStateFlow<PlanDestination?>(KEY_ADDED_DESTINATION, null)
                 .collectAsState()
@@ -498,11 +501,15 @@ fun AppNavGraph() {
                 vm.addDestinationFromDetail(dest)
                 backStackEntry.savedStateHandle.remove<PlanDestination>(KEY_ADDED_DESTINATION)
             }
+            val context = LocalContext.current
             SearchNPlanScreen(
                 onNavigateBack = { navController.popBackStack() },
                 onOpenDetail = { type, id ->
                     navController.navigate("item_detail/$type/$id?fromSearch=true")
                 },
+                viewModel = vm,
+                onNavigateTo = { lat, lng -> NavigationIntentHelper.launchSingleNavigation(context, lat, lng) },
+                onNavigateAll = { NavigationIntentHelper.launchNavigation(context, it) },
             )
         }
     }

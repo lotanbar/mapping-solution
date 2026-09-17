@@ -28,6 +28,7 @@ kotlin {
             api(libs.jetbrains.lifecycle.viewmodel.compose)
             implementation(libs.compose.ui.backhandler)
             api(libs.coil3.compose)
+            implementation(libs.reorderable)
             implementation(libs.coil3.network.okhttp)
             implementation(libs.kotlinx.coroutines.core)
         }

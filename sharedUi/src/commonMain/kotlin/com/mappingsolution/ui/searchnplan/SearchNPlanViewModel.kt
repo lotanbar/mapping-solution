@@ -1,10 +1,9 @@
 package com.mappingsolution.ui.searchnplan
 
-import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mappingsolution.data.fs.PlanFileRepository
-import com.mappingsolution.data.map.MapHolder
+import com.mappingsolution.data.prefs.ViewportPreference
 import com.mappingsolution.data.map.SearchPreviewState
 import com.mappingsolution.data.model.DestinationSource
 import com.mappingsolution.data.model.Plan
@@ -12,7 +11,6 @@ import com.mappingsolution.data.model.PlanDestination
 import com.mappingsolution.data.model.SearchResult
 import com.mappingsolution.data.places.OsmPoiRepository
 import com.mappingsolution.data.search.SearchRepository
-import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -25,20 +23,17 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import javax.inject.Inject
 
-@HiltViewModel
-class SearchNPlanViewModel @Inject constructor(
+open class SearchNPlanViewModel(
     private val searchRepository: SearchRepository,
     private val planRepository: PlanFileRepository,
-    private val mapHolder: MapHolder,
+    /** Last known map camera, used to rank results by distance from the viewport. */
+    private val loadCamera: () -> ViewportPreference.SavedCamera?,
     private val searchPreviewState: SearchPreviewState,
     private val osmPoiRepository: OsmPoiRepository,
-    savedStateHandle: SavedStateHandle,
-) : ViewModel() {
-
     /** Non-null when this screen was opened from an existing Library plan. */
-    private val loadedPlanId: String? = savedStateHandle.get<String>("planId")
+    private val loadedPlanId: String?,
+) : ViewModel() {
 
     /** True when the screen was opened from the Library with pre-filled destinations. */
     val openedFromLibrary: Boolean = loadedPlanId != null
@@ -83,7 +78,7 @@ class SearchNPlanViewModel @Inject constructor(
                     return@collectLatest
                 }
                 delay(300)
-                val camera = mapHolder.loadCamera()
+                val camera = loadCamera()
                 val lat = camera?.lat ?: 0.0
                 val lng = camera?.lng ?: 0.0
                 isLoading.value = true

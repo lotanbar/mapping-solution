@@ -12,7 +12,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.activity.compose.BackHandler
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
@@ -56,17 +57,16 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.LocalContentColor
-import androidx.hilt.navigation.compose.hiltViewModel
+import com.mappingsolution.data.model.PlanDestination
 import com.mappingsolution.data.model.SearchResult
 import com.mappingsolution.ui.searchnplan.components.SearchResultRow
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun SearchNPlanScreen(
     onNavigateBack: () -> Unit,
@@ -74,9 +74,12 @@ fun SearchNPlanScreen(
     isEmbedded: Boolean = false,
     onMinContentHeightChanged: ((Int) -> Unit)? = null,
     bottomContentPadding: androidx.compose.ui.unit.Dp = 0.dp,
-    viewModel: SearchNPlanViewModel = hiltViewModel(),
+    viewModel: SearchNPlanViewModel,
+    /** Starts turn-by-turn navigation to one point in the platform's maps app. */
+    onNavigateTo: (lat: Double, lng: Double) -> Unit,
+    /** Starts navigation through all plan destinations in order. */
+    onNavigateAll: (List<PlanDestination>) -> Unit,
 ) {
-    val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val query by viewModel.searchQuery.collectAsState()
     val results by viewModel.results.collectAsState()
@@ -185,9 +188,7 @@ fun SearchNPlanScreen(
                                     SearchResultRow(
                                         result = result,
                                         onNavigate = {
-                                            NavigationIntentHelper.launchSingleNavigation(
-                                                context, result.poi.lat, result.poi.lng,
-                                            )
+                                            onNavigateTo(result.poi.lat, result.poi.lng)
                                         },
                                         onAddToPlan = { viewModel.addDestination(result) },
                                         onOpenDetail = onOpenDetail?.let { callback ->
@@ -274,9 +275,7 @@ fun SearchNPlanScreen(
                                 SearchResultRow(
                                     result = result,
                                     onNavigate = {
-                                        NavigationIntentHelper.launchSingleNavigation(
-                                            context, result.poi.lat, result.poi.lng,
-                                        )
+                                        onNavigateTo(result.poi.lat, result.poi.lng)
                                     },
                                     onAddToPlan = { viewModel.addDestination(result) },
                                     onOpenDetail = onOpenDetail?.let { callback ->
@@ -323,7 +322,7 @@ fun SearchNPlanScreen(
                     horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
                 ) {
                     Button(
-                        onClick = { NavigationIntentHelper.launchNavigation(context, destinations) },
+                        onClick = { onNavigateAll(destinations) },
                         modifier = Modifier.weight(1f),
                         enabled = destinations.isNotEmpty(),
                     ) {
