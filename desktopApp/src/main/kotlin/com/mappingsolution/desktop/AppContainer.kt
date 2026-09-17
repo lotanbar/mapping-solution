@@ -13,6 +13,7 @@ import com.mappingsolution.data.map.SearchPreviewState
 import com.mappingsolution.data.places.OsmApiService
 import com.mappingsolution.data.places.OsmPoiCache
 import com.mappingsolution.data.places.OsmPoiRepository
+import com.mappingsolution.data.places.ViewportPoiLoader
 import com.mappingsolution.data.places.WikimediaRepository
 import com.mappingsolution.data.prefs.HillshadePreference
 import com.mappingsolution.data.prefs.MapStylePreference
@@ -29,6 +30,10 @@ import com.mappingsolution.ui.recording.RouteFinalizeViewModel
 import com.mappingsolution.ui.searchnplan.SearchNPlanViewModel
 import com.mappingsolution.ui.poi.PoiScreenArgs
 import com.mappingsolution.ui.poi.UnifiedPoiViewModel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -67,6 +72,14 @@ internal class AppContainer {
     val hillshadePreference = HillshadePreference(stores)
     val viewportPreference = ViewportPreference(stores)
     val mapLayersState = MapLayersState(mapStylePreference, hillshadePreference, rasterLayerRepository)
+
+    /** Application-lifetime scope for background loading shared across screens. */
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val viewportPoiLoader = ViewportPoiLoader(osmPoiRepository, bulkPoiRepository, appScope)
+
+    init {
+        appScope.launch { osmPoiRepository.evictStaleCacheOnLaunch() }
+    }
 
     val libraryJobs = DesktopLibraryJobs(importRepository, recordingRepository, rasterLayerRepository, storageManager)
 

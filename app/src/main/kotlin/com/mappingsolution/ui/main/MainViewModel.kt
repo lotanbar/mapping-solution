@@ -14,18 +14,14 @@ import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.model.Route
 import com.mappingsolution.data.model.RoutePoint
-import com.mappingsolution.data.places.FetchedBounds
-import com.mappingsolution.data.places.NEARBY_POI_MIN_ZOOM
-import com.mappingsolution.data.places.OSM_FETCH_DEBOUNCE_MS
 import com.mappingsolution.data.places.OsmPoiRepository
+import com.mappingsolution.data.places.ViewportPoiLoader
 import com.mappingsolution.data.prefs.ViewportPreference
 import com.mappingsolution.data.recording.processing.OsmRoadCache
 import dagger.hilt.android.lifecycle.HiltViewModel
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -112,14 +108,7 @@ class MainViewModel @Inject constructor(
         mapLayersState.setMapStyle(next)
     }
 
-    private var osmRefreshJob: Job? = null
-    private var bulkRefreshJob: Job? = null
-
-    /** Last viewport bounds for which the OSM POI fetch actually succeeded. */
-    @Volatile private var lastSuccessfulBounds: FetchedBounds? = null
-
-    /** Tolerance in degrees (~110 m) used to consider two viewports identical. */
-    private val BOUNDS_EPSILON = 0.001
+    private val viewportPoiLoader = ViewportPoiLoader(osmPoiRepository, bulkPoiRepository, viewModelScope)
 
     init {
         viewModelScope.launch {
@@ -145,52 +134,6 @@ class MainViewModel @Inject constructor(
         north: Double, south: Double, east: Double, west: Double,
     ) {
         saveCameraPosition(lat, lng, zoom, bearing, tilt)
-
-        if (zoom <= NEARBY_POI_MIN_ZOOM) {
-            osmRefreshJob?.cancel()
-            bulkRefreshJob?.cancel()
-            osmPoiRepository.hide()
-            bulkPoiRepository.clear()
-            lastSuccessfulBounds = null
-            return
-        }
-
-        // Skip re-fetching if the viewport hasn't meaningfully changed (e.g. returning from a
-        // POI detail screen — same map position, no new data to load).
-        // Epsilon of 0.001° ≈ 110 m — well above MapLibre's floating-point jitter on resume.
-        val newBounds = FetchedBounds(north, south, east, west)
-        val prev = lastSuccessfulBounds
-        if (prev != null &&
-            kotlin.math.abs(newBounds.north - prev.north) < BOUNDS_EPSILON &&
-            kotlin.math.abs(newBounds.south - prev.south) < BOUNDS_EPSILON &&
-            kotlin.math.abs(newBounds.east  - prev.east)  < BOUNDS_EPSILON &&
-            kotlin.math.abs(newBounds.west  - prev.west)  < BOUNDS_EPSILON
-        ) {
-            android.util.Log.d("MainViewModel", "onCameraChanged: SKIPPED — bounds unchanged (within ${BOUNDS_EPSILON}°)")
-            return
-        }
-        android.util.Log.d("MainViewModel", "onCameraChanged: PROCEEDING — zoom=$zoom prev=$prev new=$newBounds")
-        osmRefreshJob?.cancel()
-        osmRefreshJob = viewModelScope.launch {
-            delay(OSM_FETCH_DEBOUNCE_MS)
-            val succeeded = osmPoiRepository.refreshForViewport(
-                north, south, east, west, zoom,
-                includeNatural = true,
-            )
-            if (succeeded) lastSuccessfulBounds = newBounds
-        }
-
-        val allGroups = groups.value
-        val bulkGroups = allGroups.filter { it.isBulk && it.importComplete }
-        android.util.Log.d("MainViewModel", "onCameraChanged: zoom=$zoom, total groups=${allGroups.size}, bulk+complete=${bulkGroups.size}")
-        allGroups.filter { it.isBulk }.forEach { g ->
-            android.util.Log.d("MainViewModel", "  bulk group '${g.name}' importComplete=${g.importComplete} isVisible=${g.isVisible}")
-        }
-        if (bulkGroups.isNotEmpty()) {
-            bulkRefreshJob?.cancel()
-            bulkRefreshJob = viewModelScope.launch {
-                bulkPoiRepository.refreshForViewport(bulkGroups, north, south, east, west)
-            }
-        }
+        viewportPoiLoader.onCameraIdle(zoom, north, south, east, west, groups.value)
     }
 }

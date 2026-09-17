@@ -23,6 +23,7 @@ import javax.swing.SwingUtilities
  * - `GET /click?x=&y=` → left click at content-pane coordinates (AWT units)
  * - `GET /clickFeature?kind=poi|route&name=` → left click on a named POI or route on the map
  * - `GET /type?text=` → types text into the focused Compose text field
+ * - `GET /camera?lat=&lng=&zoom=` → moves the map camera
  */
 internal object DevAutomation {
     private const val TAG = "DevAutomation"
@@ -30,6 +31,10 @@ internal object DevAutomation {
     /** Set by the map screen: projects a named feature to map-relative logical pixels. */
     @Volatile
     var featureLocator: ((kind: String, name: String) -> DpOffset?)? = null
+
+    /** Set by the map screen: animates the camera to a position. */
+    @Volatile
+    var cameraMover: ((lat: Double, lng: Double, zoom: Double) -> Unit)? = null
 
     fun startIfEnabled(window: Window) {
         val port = System.getenv("MS_AUTOMATION_PORT")?.toIntOrNull() ?: return
@@ -93,6 +98,18 @@ internal object DevAutomation {
             }
             Thread.sleep(300)
             respond(exchange, "typed ${text.length} chars")
+        }
+        server.createContext("/camera") { exchange ->
+            val query = parseQuery(exchange.requestURI.rawQuery)
+            val lat = query["lat"]?.toDoubleOrNull()
+            val lng = query["lng"]?.toDoubleOrNull()
+            val zoom = query["zoom"]?.toDoubleOrNull()
+            if (lat == null || lng == null || zoom == null) {
+                respond(exchange, "usage: /camera?lat=&lng=&zoom=", status = 400)
+            } else {
+                SwingUtilities.invokeAndWait { cameraMover?.invoke(lat, lng, zoom) }
+                respond(exchange, "camera moving to $lat,$lng z$zoom")
+            }
         }
         server.start()
         AppLog.i(TAG, "Automation listening on http://localhost:$port")

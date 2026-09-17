@@ -1,5 +1,6 @@
 package com.mappingsolution.desktop
 
+import com.mappingsolution.data.model.DestinationSource
 import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.Poi
 import com.mappingsolution.data.model.Route
@@ -11,19 +12,41 @@ import org.json.JSONObject
 internal object MapGeoJson {
     private const val DEFAULT_COLOR = "#FF5722"
 
-    fun pois(pois: List<Poi>, groups: List<Group>): String {
+    /** Marker image ID: `<border>|<iconKey>`, where border is `plain` or `star` (gold outline). */
+    fun markerId(iconKey: String?, starred: Boolean = false): String =
+        "${if (starred) "star" else "plain"}|${iconKey?.takeIf(String::isNotBlank) ?: "marker"}"
+
+    /** Personal POIs, mirroring the Android map's visibility rules. */
+    fun personalPois(pois: List<Poi>, groups: List<Group>): List<Pair<Poi, String>> {
         val groupsById = groups.associateBy { it.id }
+        val hiddenGroupIds = groups.filter { !it.isVisible }.map { it.id }.toSet()
+        val importedGroupIds = groups.filter { it.isImported }.map { it.id }.toSet()
+        // An imported POI the user starred is shown once, as the star.
+        val starredImportedIds = pois.filter { it.savedSource == DestinationSource.IMPORTED }.mapNotNull { it.sourceId }.toSet()
+        return pois.filter { poi ->
+            val hiddenByStar = poi.savedSource == null && poi.groupId in importedGroupIds && poi.id in starredImportedIds
+            poi.isVisible && !hiddenByStar && (poi.groupId == null || poi.groupId !in hiddenGroupIds)
+        }.map { poi ->
+            val icon = if (poi.savedSource != null) markerId(poi.iconKey, starred = true)
+            else markerId(poi.groupId?.let(groupsById::get)?.iconKey)
+            poi to icon
+        }
+    }
+
+    /** OSM POIs in view, minus those the user starred (shown as personal stars instead). */
+    fun osmPois(osmPois: List<Poi>, personalPois: List<Poi>, osmGroupVisible: Boolean): List<Pair<Poi, String>> {
+        if (!osmGroupVisible) return emptyList()
+        val starredOsmIds = personalPois.filter { it.savedSource == DestinationSource.OSM }.mapNotNull { it.sourceId }.toSet()
+        return osmPois.filterNot { it.id in starredOsmIds }.map { it to markerId(it.iconKey) }
+    }
+
+    fun points(markers: List<Pair<Poi, String>>): String {
         val features = JSONArray()
-        for (poi in pois) {
-            val group = poi.groupId?.let(groupsById::get)
-            if (!poi.isVisible || group?.isVisible == false) continue
+        for ((poi, icon) in markers) {
             features.put(
                 feature(
                     geometry = JSONObject().put("type", "Point").put("coordinates", JSONArray().put(poi.lng).put(poi.lat)),
-                    properties = JSONObject()
-                        .put("id", poi.id)
-                        .put("name", poi.name)
-                        .put("color", cssColor(group?.color)),
+                    properties = JSONObject().put("id", poi.id).put("name", poi.name).put("icon", icon),
                 )
             )
         }

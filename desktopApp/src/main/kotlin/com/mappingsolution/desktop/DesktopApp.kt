@@ -74,7 +74,7 @@ internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
                 container,
                 onOpenLibrary = { navigate(Screen.Library) },
                 onOpenSearch = { navigate(Screen.Search(planId = null)) },
-                onOpenPoi = { poiId -> navigate(Screen.PoiDetail(PoiScreenArgs(type = "poi", id = poiId))) },
+                onOpenPoi = { type, id -> navigate(Screen.PoiDetail(PoiScreenArgs(type = type, id = id))) },
             )
             Screen.Library -> DesktopLibraryScreen(
                 container = container,
