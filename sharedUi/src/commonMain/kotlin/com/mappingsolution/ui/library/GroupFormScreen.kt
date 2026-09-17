@@ -11,7 +11,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import org.jetbrains.compose.resources.painterResource
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
 import com.mappingsolution.data.model.GroupType
 import com.mappingsolution.ui.common.ColorSelectorField
 import com.mappingsolution.ui.common.IconCatalog
@@ -21,7 +20,7 @@ import com.mappingsolution.ui.common.IconCatalog
 fun GroupFormScreen(
     onNavigateBack: () -> Unit,
     onNavigateToIconPicker: (currentIconKey: String) -> Unit,
-    viewModel: GroupFormViewModel = hiltViewModel(),
+    viewModel: GroupFormViewModel,
 ) {
     val state by viewModel.state.collectAsState()
 

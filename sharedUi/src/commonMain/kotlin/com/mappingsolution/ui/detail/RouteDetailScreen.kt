@@ -40,7 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import com.mappingsolution.ui.library.components.parseHex
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -51,7 +51,7 @@ import kotlin.math.roundToInt
 fun RouteDetailScreen(
     onNavigateBack: () -> Unit,
     onNavigateToEdit: (String) -> Unit,
-    viewModel: RouteDetailViewModel = hiltViewModel(),
+    viewModel: RouteDetailViewModel,
 ) {
     val state by viewModel.state.collectAsState()
     var confirmRemove by remember { mutableStateOf(false) }
@@ -140,8 +140,7 @@ private fun LabeledField(label: String, value: String) {
 
 @Composable
 private fun ColorField(label: String, colorHex: String) {
-    val color = runCatching { Color(android.graphics.Color.parseColor(colorHex)) }
-        .getOrElse { MaterialTheme.colorScheme.primary }
+    val color = parseHex(colorHex)
     Column {
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(4.dp))

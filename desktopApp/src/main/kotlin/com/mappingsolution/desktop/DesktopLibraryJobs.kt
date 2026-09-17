@@ -11,6 +11,7 @@ import com.mappingsolution.ui.library.ImportJob
 import com.mappingsolution.ui.library.LibraryJobs
 import com.mappingsolution.ui.library.MbtilesImportResult
 import com.mappingsolution.ui.library.MbtilesJob
+import com.mappingsolution.ui.library.RefinementProgress
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,18 +37,19 @@ internal class DesktopLibraryJobs(
 
     // ── Route refinement ─────────────────────────────────────────────────
 
-    private val _refinementProgress = MutableStateFlow<Map<String, String>>(emptyMap())
-    override val refinementProgress: StateFlow<Map<String, String>> = _refinementProgress.asStateFlow()
+    private val _refinementProgress = MutableStateFlow<Map<String, RefinementProgress>>(emptyMap())
+    override val refinementProgress: StateFlow<Map<String, RefinementProgress>> = _refinementProgress.asStateFlow()
     private val refinementJobs = mutableMapOf<String, Job>()
 
     override fun refineRoute(routeId: String) {
         if (refinementJobs[routeId]?.isActive == true) return
-        _refinementProgress.update { it + (routeId to "Queued for refinement") }
+        _refinementProgress.update { it + (routeId to RefinementProgress("Queued for refinement", 0f)) }
         refinementJobs[routeId] = scope.launch {
             try {
                 val distance = recordingRepository.mapMatchTrack(routeId) { phase, done, total ->
                     val text = if (total > 0) "$phase — ${done * 100 / total}%" else phase
-                    _refinementProgress.update { it + (routeId to text) }
+                    val fraction = if (total > 0) done.toFloat() / total else 0f
+                    _refinementProgress.update { it + (routeId to RefinementProgress(text, fraction)) }
                 }
                 recordingRepository.completeRefinement(routeId, distance)
             } catch (e: Exception) {

@@ -29,7 +29,7 @@ class AndroidLibraryJobs @Inject constructor(
 
     private val workManager = WorkManager.getInstance(context)
 
-    override val refinementProgress: Flow<Map<String, String>> =
+    override val refinementProgress: Flow<Map<String, RefinementProgress>> =
         workManager.getWorkInfosByTagFlow(RouteRefinementWorker.TAG).map { infos ->
             infos.filter { it.state.isActive() }.mapNotNull { info ->
                 val routeId = info.tags.firstOrNull { it.startsWith(RouteRefinementWorker.ROUTE_TAG_PREFIX) }
@@ -38,7 +38,10 @@ class AndroidLibraryJobs @Inject constructor(
                     ?: if (info.state == WorkInfo.State.RUNNING) "Refining…" else "Queued for refinement"
                 val done = info.progress.getInt(RouteRefinementWorker.KEY_DONE, 0)
                 val total = info.progress.getInt(RouteRefinementWorker.KEY_TOTAL, 0)
-                routeId to if (total > 0) "$phase — ${done * 100 / total}%" else phase
+                routeId to RefinementProgress(
+                    text = if (total > 0) "$phase — ${done * 100 / total}%" else phase,
+                    fraction = if (total > 0) done.toFloat() / total else 0f,
+                )
             }.toMap()
         }
 

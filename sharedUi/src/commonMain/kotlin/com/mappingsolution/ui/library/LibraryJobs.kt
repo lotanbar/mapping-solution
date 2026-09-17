@@ -3,6 +3,9 @@ package com.mappingsolution.ui.library
 import com.mappingsolution.data.fs.ImportResult
 import kotlinx.coroutines.flow.Flow
 
+/** Progress of one route refinement. */
+data class RefinementProgress(val text: String, val fraction: Float)
+
 /** A GPX/ZIP/folder import as shown in the library; [result] is set once it finishes. */
 data class ImportJob(
     val label: String?,
@@ -25,8 +28,8 @@ data class MbtilesJob(
  * application coroutines). Every flow reflects work started from any screen instance.
  */
 interface LibraryJobs {
-    /** Active route refinements: route ID → human-readable progress. */
-    val refinementProgress: Flow<Map<String, String>>
+    /** Active (queued or running) route refinements keyed by route ID. */
+    val refinementProgress: Flow<Map<String, RefinementProgress>>
     val importJob: Flow<ImportJob?>
     val mbtilesJob: Flow<MbtilesJob?>
 

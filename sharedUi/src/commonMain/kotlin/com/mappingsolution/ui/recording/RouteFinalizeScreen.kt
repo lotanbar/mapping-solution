@@ -1,6 +1,7 @@
 package com.mappingsolution.ui.recording
 
-import androidx.activity.compose.BackHandler
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,7 +37,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
 import com.mappingsolution.ui.common.ColorSelectorField
 import com.mappingsolution.ui.common.FormSaveButton
 import kotlinx.coroutines.delay
@@ -44,13 +44,13 @@ import kotlinx.coroutines.delay
 private const val DISCARD_GUARD_THRESHOLD_M = 100.0
 private const val DISCARD_COOLDOWN_SEC = 5
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun RouteFinalizeScreen(
     routeId: String,
     isLibraryEdit: Boolean = false,
     onDone: () -> Unit,
-    viewModel: RouteFinalizeViewModel = hiltViewModel(),
+    viewModel: RouteFinalizeViewModel,
 ) {
     LaunchedEffect(routeId) { viewModel.load(routeId) }
 

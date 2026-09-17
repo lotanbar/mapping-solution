@@ -1,19 +1,16 @@
 package com.mappingsolution.ui.library
 
-import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mappingsolution.data.fs.DuplicateFieldError
 import com.mappingsolution.data.fs.GroupFileRepository
 import com.mappingsolution.data.model.Group
 import com.mappingsolution.data.model.GroupType
-import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import javax.inject.Inject
 
 data class GroupFormState(
     val name: String = "",
@@ -31,13 +28,13 @@ data class GroupFormState(
     val savedSuccessfully: Boolean = false,
 )
 
-@HiltViewModel
-class GroupFormViewModel @Inject constructor(
+/** Creates a group, or edits the group with [editGroupId] when it is set. */
+open class GroupFormViewModel(
     private val groupRepository: GroupFileRepository,
-    savedStateHandle: SavedStateHandle,
+    editGroupId: String?,
 ) : ViewModel() {
 
-    private val groupId: String? = savedStateHandle.get<String>("groupId")?.takeIf { it.isNotEmpty() }
+    private val groupId: String? = editGroupId?.takeIf { it.isNotEmpty() }
 
     val isEditing: Boolean get() = groupId != null
 

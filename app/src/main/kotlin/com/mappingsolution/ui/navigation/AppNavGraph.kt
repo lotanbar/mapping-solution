@@ -51,6 +51,9 @@ import androidx.navigation.navArgument
 import com.mappingsolution.data.model.PlanDestination
 import com.mappingsolution.service.RecordingService
 import com.mappingsolution.ui.library.GroupFormScreen
+import com.mappingsolution.ui.AndroidGroupFormViewModel
+import com.mappingsolution.ui.AndroidRouteDetailViewModel
+import com.mappingsolution.ui.AndroidRouteFinalizeViewModel
 import com.mappingsolution.ui.library.GroupFormViewModel
 import com.mappingsolution.ui.library.IconPickerScreen
 import com.mappingsolution.ui.library.AndroidLibraryScreen
@@ -346,6 +349,7 @@ fun AppNavGraph() {
                 RouteDetailScreen(
                     onNavigateBack = { navController.popBackStack() },
                     onNavigateToEdit = { routeId -> navController.navigate("route_edit/$routeId") },
+                    viewModel = hiltViewModel<AndroidRouteDetailViewModel>(),
                 )
             } else {
                 AndroidUnifiedPoiScreen(
@@ -399,7 +403,7 @@ fun AppNavGraph() {
         }
 
         composable(ROUTE_GROUP_FORM) { backStackEntry ->
-            val vm: GroupFormViewModel = hiltViewModel(backStackEntry)
+            val vm: GroupFormViewModel = hiltViewModel<AndroidGroupFormViewModel>(backStackEntry)
             val selectedIcon = backStackEntry.savedStateHandle
                 .getStateFlow(KEY_SELECTED_ICON, "").collectAsState()
             LaunchedEffect(selectedIcon.value) {
@@ -422,7 +426,7 @@ fun AppNavGraph() {
             route = ROUTE_GROUP_FORM_EDIT,
             arguments = listOf(navArgument(KEY_GROUP_ID) { type = NavType.StringType }),
         ) { backStackEntry ->
-            val vm: GroupFormViewModel = hiltViewModel(backStackEntry)
+            val vm: GroupFormViewModel = hiltViewModel<AndroidGroupFormViewModel>(backStackEntry)
             val selectedIcon = backStackEntry.savedStateHandle
                 .getStateFlow(KEY_SELECTED_ICON, "").collectAsState()
             LaunchedEffect(selectedIcon.value) {
@@ -462,6 +466,7 @@ fun AppNavGraph() {
             RouteFinalizeScreen(
                 routeId = routeId,
                 onDone = { navController.popBackStack() },
+                viewModel = hiltViewModel<AndroidRouteFinalizeViewModel>(),
             )
         }
 
@@ -474,6 +479,7 @@ fun AppNavGraph() {
                 routeId = routeId,
                 isLibraryEdit = true,
                 onDone = { navController.popBackStack() },
+                viewModel = hiltViewModel<AndroidRouteFinalizeViewModel>(),
             )
         }
 

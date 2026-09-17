@@ -1,20 +1,15 @@
 package com.mappingsolution.ui.recording
 
-import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.WorkInfo
-import androidx.work.WorkManager
 import com.mappingsolution.data.fs.RouteFileRepository
-import com.mappingsolution.service.RouteRefinementWorker
-import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
+import com.mappingsolution.ui.library.LibraryJobs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import javax.inject.Inject
 
 data class RouteFinalizeState(
     val routeId: String = "",
@@ -29,15 +24,13 @@ data class RouteFinalizeState(
     val refinementProgressFraction: Float = 0f,
 )
 
-@HiltViewModel
-class RouteFinalizeViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
+open class RouteFinalizeViewModel(
     private val routeRepository: RouteFileRepository,
+    private val jobs: LibraryJobs,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(RouteFinalizeState())
     val state: StateFlow<RouteFinalizeState> = _state.asStateFlow()
-    private val workManager = WorkManager.getInstance(context)
     private var refinementObserver: Job? = null
 
     fun load(routeId: String) {
@@ -58,22 +51,14 @@ class RouteFinalizeViewModel @Inject constructor(
     private fun observeRefinement(routeId: String) {
         refinementObserver?.cancel()
         refinementObserver = viewModelScope.launch {
-            workManager.getWorkInfosForUniqueWorkFlow(
-                RouteRefinementWorker.uniqueWorkName(routeId)
-            ).collect { infos ->
-                val info = infos.lastOrNull()
-                val active = info?.state == WorkInfo.State.RUNNING ||
-                    info?.state == WorkInfo.State.ENQUEUED ||
-                    info?.state == WorkInfo.State.BLOCKED
-                val phase = info?.progress?.getString(RouteRefinementWorker.KEY_PHASE)
-                    ?: if (active) "Queued for refinement" else ""
-                val done = info?.progress?.getInt(RouteRefinementWorker.KEY_DONE, 0) ?: 0
-                val total = info?.progress?.getInt(RouteRefinementWorker.KEY_TOTAL, 0) ?: 0
+            combine(jobs.refinementProgress, routeRepository.observeAll()) { progress, routes ->
+                progress[routeId] to (routes.find { it.id == routeId }?.isRefined == true)
+            }.collect { (progress, refinedOnDisk) ->
                 _state.value = _state.value.copy(
-                    isRefining = active,
-                    isRefined = _state.value.isRefined || info?.state == WorkInfo.State.SUCCEEDED,
-                    refinementProgress = phase,
-                    refinementProgressFraction = if (total > 0) done.toFloat() / total else 0f,
+                    isRefining = progress != null,
+                    isRefined = _state.value.isRefined || refinedOnDisk,
+                    refinementProgress = progress?.text.orEmpty(),
+                    refinementProgressFraction = progress?.fraction ?: 0f,
                 )
             }
         }
@@ -81,7 +66,7 @@ class RouteFinalizeViewModel @Inject constructor(
 
     fun cancelRefinement() {
         val routeId = _state.value.routeId
-        if (routeId.isNotEmpty()) RouteRefinementWorker.cancel(context, routeId)
+        if (routeId.isNotEmpty()) jobs.cancelRefinement(routeId)
     }
 
     fun onNameChange(value: String) { _state.value = _state.value.copy(name = value) }

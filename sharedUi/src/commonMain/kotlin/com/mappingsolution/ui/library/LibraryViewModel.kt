@@ -64,6 +64,7 @@ open class LibraryViewModel(
 ) : ViewModel() {
 
     val refinementProgress: StateFlow<Map<String, String>> = jobs.refinementProgress
+        .map { progress -> progress.mapValues { it.value.text } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val refiningRouteIds: StateFlow<Set<String>> = refinementProgress

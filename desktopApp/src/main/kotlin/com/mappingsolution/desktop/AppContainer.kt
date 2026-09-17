@@ -21,7 +21,9 @@ import com.mappingsolution.data.recording.processing.OsmRoadCache
 import com.mappingsolution.data.util.ApiKeys
 import com.mappingsolution.data.util.AppLog
 import com.mappingsolution.data.util.StorageManager
+import com.mappingsolution.ui.library.GroupFormViewModel
 import com.mappingsolution.ui.library.LibraryViewModel
+import com.mappingsolution.ui.recording.RouteFinalizeViewModel
 import com.mappingsolution.ui.poi.PoiScreenArgs
 import com.mappingsolution.ui.poi.UnifiedPoiViewModel
 import okhttp3.OkHttpClient
@@ -71,6 +73,10 @@ internal class AppContainer {
         args = args,
         openPhoto = { path -> File(path).inputStream() },
     )
+
+    fun newGroupFormViewModel(groupId: String?) = GroupFormViewModel(groupRepository, groupId)
+
+    fun newRouteFinalizeViewModel() = RouteFinalizeViewModel(routeRepository, libraryJobs)
 
     fun newLibraryViewModel() = LibraryViewModel(
         groupRepository, poiRepository, routeRepository, planRepository, exportRepository,

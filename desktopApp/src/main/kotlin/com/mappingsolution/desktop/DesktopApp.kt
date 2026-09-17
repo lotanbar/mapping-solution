@@ -23,9 +23,12 @@ import androidx.compose.ui.window.FrameWindowScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mappingsolution.data.util.AppLog
 import com.mappingsolution.ui.image.ZipImageFetcher
+import com.mappingsolution.ui.library.GroupFormScreen
+import com.mappingsolution.ui.library.IconPickerScreen
 import com.mappingsolution.ui.library.LibraryScreen
 import com.mappingsolution.ui.poi.PoiScreenArgs
 import com.mappingsolution.ui.poi.UnifiedPoiScreen
+import com.mappingsolution.ui.recording.RouteFinalizeScreen
 import kotlinx.coroutines.launch
 import java.awt.Desktop
 import java.io.File
@@ -34,6 +37,10 @@ internal sealed interface Screen {
     data object Map : Screen
     data object Library : Screen
     data class PoiDetail(val args: PoiScreenArgs) : Screen
+    /** [instance] keeps each visit's ViewModel separate while the icon picker sits on top. */
+    data class GroupForm(val groupId: String?, val instance: Long = System.nanoTime()) : Screen
+    data class IconPicker(val form: GroupForm, val currentIconKey: String) : Screen
+    data class RouteEdit(val routeId: String) : Screen
 }
 
 @Composable
@@ -67,9 +74,44 @@ internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
                 container = container,
                 onNavigateBack = goBack,
                 onEditPoi = { poiId -> navigate(Screen.PoiDetail(PoiScreenArgs(type = "poi", id = poiId))) },
+                onCreateGroup = { navigate(Screen.GroupForm(groupId = null)) },
+                onEditGroup = { groupId -> navigate(Screen.GroupForm(groupId)) },
+                onEditRoute = { routeId -> navigate(Screen.RouteEdit(routeId)) },
                 onUnsupported = unsupported,
                 showMessage = showMessage,
             )
+            is Screen.GroupForm -> {
+                val viewModel = viewModel(key = "group-form-${screen.instance}") {
+                    container.newGroupFormViewModel(screen.groupId)
+                }
+                GroupFormScreen(
+                    onNavigateBack = goBack,
+                    onNavigateToIconPicker = { key -> navigate(Screen.IconPicker(screen, key)) },
+                    viewModel = viewModel,
+                )
+            }
+            is Screen.IconPicker -> {
+                val formViewModel = viewModel(key = "group-form-${screen.form.instance}") {
+                    container.newGroupFormViewModel(screen.form.groupId)
+                }
+                IconPickerScreen(
+                    currentIconKey = screen.currentIconKey,
+                    onIconSelected = { key ->
+                        formViewModel.onIconChange(key)
+                        goBack()
+                    },
+                    onNavigateBack = goBack,
+                )
+            }
+            is Screen.RouteEdit -> {
+                val viewModel = viewModel(key = "route-edit-${screen.routeId}") { container.newRouteFinalizeViewModel() }
+                RouteFinalizeScreen(
+                    routeId = screen.routeId,
+                    isLibraryEdit = true,
+                    onDone = goBack,
+                    viewModel = viewModel,
+                )
+            }
             is Screen.PoiDetail -> DesktopPoiScreen(
                 container = container,
                 args = screen.args,
@@ -118,6 +160,9 @@ private fun FrameWindowScope.DesktopLibraryScreen(
     container: AppContainer,
     onNavigateBack: () -> Unit,
     onEditPoi: (String) -> Unit,
+    onCreateGroup: () -> Unit,
+    onEditGroup: (String) -> Unit,
+    onEditRoute: (String) -> Unit,
     onUnsupported: () -> Unit,
     showMessage: (String) -> Unit,
 ) {
@@ -149,10 +194,10 @@ private fun FrameWindowScope.DesktopLibraryScreen(
 
     LibraryScreen(
         onNavigateBack = onNavigateBack,
-        onCreateGroup = onUnsupported,
-        onEditGroup = { onUnsupported() },
+        onCreateGroup = onCreateGroup,
+        onEditGroup = onEditGroup,
         onEditPoi = onEditPoi,
-        onEditRoute = { onUnsupported() },
+        onEditRoute = onEditRoute,
         onOpenPlan = { onUnsupported() },
         onContinueRecording = { onUnsupported() },
         viewModel = viewModel,
