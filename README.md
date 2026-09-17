@@ -53,7 +53,7 @@ The desktop map runtime needs **JDK 25** and a **Vulkan** driver; Gradle downloa
 ```
 
 `-PdesktopOnly` skips the Android modules so no Android SDK is needed. Installers can only be built on
-their target OS; `.github/workflows/desktop-packages.yml` builds all of them.
+their target OS.
 
 Desktop data lives in `%APPDATA%\MappingSolution` (Windows) or `$XDG_DATA_HOME/MappingSolution`
 (Linux, default `~/.local/share`), using the same folder layout as the Android app, so a copy of the
