@@ -1,28 +1,16 @@
 package com.mappingsolution.desktop
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,17 +20,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.mappingsolution.data.map.MapStyle
 import com.mappingsolution.data.model.Poi
-import com.mappingsolution.data.model.Route
 import com.mappingsolution.data.model.RoutePoint
 import com.mappingsolution.data.places.NEARBY_POI_MIN_ZOOM
 import com.mappingsolution.data.places.OSM_POI_GROUP_ID
 import com.mappingsolution.data.util.AppLog
 import com.mappingsolution.ui.common.IconCatalog
 import com.mappingsolution.ui.map.PoiMarkerPainter
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import org.jetbrains.compose.resources.painterResource
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.expressions.ast.Expression
@@ -77,16 +68,11 @@ import org.maplibre.compose.sources.rememberMbtilesUrl
 import org.maplibre.compose.sources.rememberRasterDemTileSource
 import org.maplibre.compose.sources.rememberRasterTileSource
 import java.io.File
+import java.net.URI
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.spatialk.geojson.Position
 
 private const val TAG = "MapScreen"
-
-private sealed interface Selection {
-    /** [type] is the POI screen type: `poi` for stored POIs, `osm_poi` for OpenStreetMap. */
-    data class PoiSelection(val poi: Poi, val type: String) : Selection
-    data class RouteSelection(val route: Route) : Selection
-}
 
 /** Android draws 80 px pins at ~0.8 scale; these sizes match them on screen. */
 private val MARKER_SIZE = DpSize(30.dp, 39.dp)
@@ -98,9 +84,11 @@ internal fun MapScreen(
     container: AppContainer,
     onOpenLibrary: () -> Unit,
     onOpenSearch: () -> Unit,
+    /** [type] is the POI screen type: `poi` for stored POIs, `osm_poi` for OpenStreetMap. */
     onOpenPoi: (type: String, id: String) -> Unit,
     onOpenRoute: (routeId: String) -> Unit,
     onCreatePoi: (lat: Double, lng: Double) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val groups by container.groupRepository.observeAll().collectAsState(emptyList())
     val pois by container.poiRepository.observeAll().collectAsState(emptyList())
@@ -115,7 +103,6 @@ internal fun MapScreen(
     val style by container.mapLayersState.mapStyle.collectAsState()
     val hillshade by container.mapLayersState.hillshadeVisible.collectAsState()
     val rasterLayers by container.mapLayersState.rasterLayers.collectAsState()
-    var selection by remember { mutableStateOf<Selection?>(null) }
 
     val personalMarkers = remember(pois, groups) { MapGeoJson.personalPois(pois, groups) }
     val osmGroupVisible = groups.find { it.id == OSM_POI_GROUP_ID }?.isVisible ?: true
@@ -126,9 +113,13 @@ internal fun MapScreen(
     }
     val routesJson = remember(routes, routePoints) { MapGeoJson.routes(routes, routePoints) }
     val mapTilerKey = container.apiKeys.mapTiler
+    // Keeps showing the previous style while the next one downloads.
+    val baseStyle by produceState<BaseStyle?>(null, style, mapTilerKey) {
+        value = withContext(Dispatchers.IO) { loadBaseStyle(style, mapTilerKey) }
+    }
 
     val mapState = rememberMapState(
-        baseStyle = BaseStyle.Uri(styleUrl(style, mapTilerKey)),
+        baseStyle = baseStyle ?: BaseStyle.Json(EMPTY_STYLE),
         initialCameraPosition = remember {
             container.viewportPreference.load()?.let {
                 CameraPosition(target = Position(it.lng, it.lat), zoom = it.zoom, bearing = it.bearing, tilt = it.tilt)
@@ -139,7 +130,10 @@ internal fun MapScreen(
         val personalSource = rememberGeoJsonSource(GeoJsonData.JsonString(MapGeoJson.points(personalMarkers)))
         val osmSource = rememberGeoJsonSource(GeoJsonData.JsonString(MapGeoJson.points(osmMarkers)))
         val bulkSource = rememberGeoJsonSource(GeoJsonData.JsonString(MapGeoJson.points(bulkMarkers)))
-        val terrain = rememberRasterDemTileSource("https://api.maptiler.com/tiles/terrain-rgb-v2/tiles.json?key=$mapTilerKey")
+        val terrain = rememberRasterDemTileSource(
+            "https://api.maptiler.com/tiles/terrain-rgb-v2/tiles.json?key=$mapTilerKey",
+            tileSize = 256, // As on Android; the tile size changes how fine the shading looks.
+        )
 
         // One marker image per icon/border combination currently on the map.
         val markerImages = markerIds.associateWith { id ->
@@ -158,7 +152,10 @@ internal fun MapScreen(
         )
         fun openPoi(list: List<Pair<Poi, String>>, type: String): FeaturesClickHandler = { features ->
             val id = features.firstOrNull()?.properties?.get("id")?.toString()?.trim('"')
-            list.find { it.first.id == id }?.let { selection = Selection.PoiSelection(it.first, type) }
+            list.find { it.first.id == id }?.let { (poi, _) ->
+                AppLog.d(TAG, "Selected POI '${poi.name}'")
+                onOpenPoi(type, poi.id)
+            }
             ClickResult.Consume
         }
 
@@ -198,7 +195,10 @@ internal fun MapScreen(
             hitPadding = 6.dp,
             onClick = { features ->
                 val id = features.firstOrNull()?.properties?.get("id")?.toString()?.trim('"')
-                routes.find { it.id == id }?.let { selection = Selection.RouteSelection(it) }
+                routes.find { it.id == id }?.let { route ->
+                    AppLog.d(TAG, "Selected route '${route.name}'")
+                    onOpenRoute(route.id)
+                }
                 ClickResult.Consume
             },
         )
@@ -220,13 +220,6 @@ internal fun MapScreen(
         )
     }
 
-    LaunchedEffect(selection) {
-        when (val selected = selection) {
-            is Selection.PoiSelection -> AppLog.d(TAG, "Selected POI '${selected.poi.name}'")
-            is Selection.RouteSelection -> AppLog.d(TAG, "Selected route '${selected.route.name}'")
-            null -> Unit
-        }
-    }
     LaunchedEffect(style) { AppLog.d(TAG, "Map style $style") }
     LaunchedEffect(personalMarkers.size, osmMarkers.size, bulkMarkers.size) {
         AppLog.d(TAG, "Markers: ${personalMarkers.size} personal, ${osmMarkers.size} OSM, ${bulkMarkers.size} imported")
@@ -273,58 +266,18 @@ internal fun MapScreen(
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
-        MaplibreMap(modifier = Modifier.fillMaxSize(), state = mapState)
-        Card(Modifier.padding(16.dp).width(300.dp).align(Alignment.TopStart)) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("MappingSolution", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "${pois.size} POIs · ${routes.size} routes · ${groups.size} groups",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onOpenLibrary) { Text("Library") }
-                    Button(onClick = onOpenSearch) { Text("Search & Plan") }
-                }
-                Button(onClick = {
-                    val target = mapState.cameraPosition.target
-                    onCreatePoi(target.latitude, target.longitude)
-                }) { Text("New POI at map center") }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MapStyle.entries.forEach { option ->
-                        FilterChip(
-                            selected = style == option,
-                            onClick = { container.mapLayersState.setMapStyle(option) },
-                            label = { Text(if (option == MapStyle.SATELLITE) "Satellite" else "Topo dark") },
-                        )
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Hillshading", Modifier.weight(1f))
-                    Switch(checked = hillshade, onCheckedChange = container.mapLayersState::setHillshadeVisible)
-                }
-                when (val selected = selection) {
-                    is Selection.PoiSelection -> {
-                        SelectionDetails(
-                            title = selected.poi.name,
-                            subtitle = groups.find { it.id == selected.poi.groupId }?.name
-                                ?: if (selected.type == "osm_poi") "OpenStreetMap" else "No group",
-                            body = selected.poi.description,
-                        )
-                        Button(onClick = { onOpenPoi(selected.type, selected.poi.id) }) { Text("Details") }
-                    }
-                    is Selection.RouteSelection -> {
-                        SelectionDetails(
-                            title = selected.route.name,
-                            subtitle = "%.2f km".format(selected.route.distanceMeters / 1000),
-                            body = selected.route.description,
-                        )
-                        Button(onClick = { onOpenRoute(selected.route.id) }) { Text("Details") }
-                    }
-                    null -> Text("Click a POI or route for details", style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
+    Box(modifier) {
+        if (baseStyle != null) MaplibreMap(modifier = Modifier.fillMaxSize(), state = mapState)
+        ActionMenu(
+            onOpenLibrary = onOpenLibrary,
+            onOpenSearch = onOpenSearch,
+            onAddPoi = {
+                val target = mapState.cameraPosition.target
+                onCreatePoi(target.latitude, target.longitude)
+            },
+            // Clear of the MapLibre logo in the corner.
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 16.dp, bottom = 40.dp),
+        )
     }
 }
 
@@ -349,19 +302,43 @@ private fun MarkerLayer(
     )
 }
 
-@Composable
-private fun SelectionDetails(title: String, subtitle: String, body: String?) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(title, style = MaterialTheme.typography.titleSmall)
-        Text(subtitle, style = MaterialTheme.typography.bodySmall)
-        body?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-    }
-}
-
 private fun styleUrl(style: MapStyle, key: String): String {
     val path = when (style) {
         MapStyle.SATELLITE -> "hybrid"
         MapStyle.TOPO_DARK -> "outdoor-v2-dark"
     }
     return "https://api.maptiler.com/maps/$path/style.json?key=$key"
+}
+
+private const val EMPTY_STYLE = """{"version":8,"sources":{},"layers":[]}"""
+
+/**
+ * Layers built into MapTiler's outdoor style. Android removes them too and draws its own tuned
+ * hillshade on every style, so they would otherwise shade the terrain twice.
+ */
+private val BUILT_IN_TERRAIN_LAYERS = setOf(
+    "Hillshade",
+    "Contour index", "Glacier contour index",
+    "Contour", "Glacier contour",
+    "Contour labels", "Glacier contour labels",
+)
+
+/** Downloads the style without its built-in terrain layers; falls back to the plain URL. */
+private fun loadBaseStyle(style: MapStyle, key: String): BaseStyle {
+    val url = styleUrl(style, key)
+    return runCatching {
+        val json = JSONObject(URI(url).toURL().readText())
+        val layers = json.getJSONArray("layers")
+        val kept = JSONArray()
+        for (i in 0 until layers.length()) {
+            val layer = layers.getJSONObject(i)
+            if (layer.optString("id") !in BUILT_IN_TERRAIN_LAYERS) kept.put(layer)
+        }
+        AppLog.d(TAG, "Style $style: removed ${layers.length() - kept.length()} built-in terrain layers")
+        json.put("layers", kept)
+        BaseStyle.Json(json.toString())
+    }.getOrElse { error ->
+        AppLog.w(TAG, "Could not preprocess style $style, using it as is: $error")
+        BaseStyle.Uri(url)
+    }
 }

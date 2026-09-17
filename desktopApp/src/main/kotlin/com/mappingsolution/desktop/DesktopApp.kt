@@ -1,9 +1,16 @@
 package com.mappingsolution.desktop
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -18,6 +25,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.FrameWindowScope
@@ -37,8 +49,8 @@ import kotlinx.coroutines.launch
 import java.awt.Desktop
 import java.io.File
 
+/** Screens shown in the side panel next to the map. */
 internal sealed interface Screen {
-    data object Map : Screen
     data object Library : Screen
     /** [fromSearch] is set when "Add to plan" should return the POI to that search screen. */
     data class PoiDetail(val args: PoiScreenArgs, val fromSearch: Search? = null) : Screen
@@ -50,122 +62,168 @@ internal sealed interface Screen {
     data class RouteDetail(val routeId: String) : Screen
 }
 
+/** Share of the window the side panel takes; phone-shaped screens need at least [PANEL_MIN_WIDTH]. */
+private const val PANEL_WIDTH_FRACTION = 0.3f
+private val PANEL_MIN_WIDTH = 360.dp
+
 @Composable
 internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
-    // A small back stack: the map is always the root.
-    var backStack by remember { mutableStateOf(listOf<Screen>(Screen.Map)) }
+    // The map always stays on screen; screens stack up in the side panel, which closes when empty.
+    var panelStack by remember { mutableStateOf(listOf<Screen>()) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val showMessage: (String) -> Unit = { message ->
         AppLog.d("DesktopApp", "Message: $message")
         scope.launch { snackbar.showSnackbar(message) }
     }
+    fun logPanel() {
+        val top = panelStack.lastOrNull()
+        DevAutomation.panelState = top?.toString() ?: "closed"
+        AppLog.d("DesktopApp", "Screen ${top ?: "Map"}")
+    }
+    /** Pushes a screen on top of the panel's current one. */
     val navigate: (Screen) -> Unit = { screen ->
-        AppLog.d("DesktopApp", "Screen $screen")
-        backStack = backStack + screen
+        panelStack = panelStack + screen
+        logPanel()
+    }
+    /** Replaces whatever the panel shows: used for actions started from the map. */
+    val open: (Screen) -> Unit = { screen ->
+        panelStack = listOf(screen)
+        logPanel()
     }
     val goBack: () -> Unit = {
-        backStack = backStack.dropLast(1).ifEmpty { listOf(Screen.Map) }
-        AppLog.d("DesktopApp", "Screen ${backStack.last()}")
+        panelStack = panelStack.dropLast(1)
+        logPanel()
     }
     val unsupported = { showMessage("Not available on desktop yet") }
 
-    Box(Modifier.fillMaxSize()) {
-        when (val screen = backStack.last()) {
-            Screen.Map -> MapScreen(
-                container,
-                onOpenLibrary = { navigate(Screen.Library) },
-                onOpenSearch = { navigate(Screen.Search(planId = null)) },
-                onOpenPoi = { type, id -> navigate(Screen.PoiDetail(PoiScreenArgs(type = type, id = id))) },
-                onOpenRoute = { routeId -> navigate(Screen.RouteDetail(routeId)) },
-                // A null ID opens the POI screen in creation mode at the given point.
-                onCreatePoi = { lat, lng -> navigate(Screen.PoiDetail(PoiScreenArgs(type = null, id = null, lat = lat, lng = lng))) },
-            )
-            Screen.Library -> DesktopLibraryScreen(
-                container = container,
-                onNavigateBack = goBack,
-                onEditPoi = { poiId -> navigate(Screen.PoiDetail(PoiScreenArgs(type = "poi", id = poiId))) },
-                onCreateGroup = { navigate(Screen.GroupForm(groupId = null)) },
-                onEditGroup = { groupId -> navigate(Screen.GroupForm(groupId)) },
-                onEditRoute = { routeId -> navigate(Screen.RouteEdit(routeId)) },
-                onOpenPlan = { planId -> navigate(Screen.Search(planId)) },
-                onUnsupported = unsupported,
-                showMessage = showMessage,
-            )
-            is Screen.GroupForm -> {
-                val viewModel = viewModel(key = "group-form-${screen.instance}") {
-                    container.newGroupFormViewModel(screen.groupId)
-                }
-                GroupFormScreen(
-                    onNavigateBack = goBack,
-                    onNavigateToIconPicker = { key -> navigate(Screen.IconPicker(screen, key)) },
-                    viewModel = viewModel,
+    BoxWithConstraints(
+        Modifier.fillMaxSize().onPreviewKeyEvent { event ->
+            (event.key == Key.Escape && event.type == KeyEventType.KeyDown && panelStack.isNotEmpty())
+                .also { if (it) goBack() }
+        },
+    ) {
+        val panelWidth = (maxWidth * PANEL_WIDTH_FRACTION).coerceAtLeast(PANEL_MIN_WIDTH)
+        Row(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                MapScreen(
+                    container,
+                    onOpenLibrary = { open(Screen.Library) },
+                    onOpenSearch = { open(Screen.Search(planId = null)) },
+                    onOpenPoi = { type, id -> open(Screen.PoiDetail(PoiScreenArgs(type = type, id = id))) },
+                    onOpenRoute = { routeId -> open(Screen.RouteDetail(routeId)) },
+                    // A null ID opens the POI screen in creation mode at the given point.
+                    onCreatePoi = { lat, lng -> open(Screen.PoiDetail(PoiScreenArgs(type = null, id = null, lat = lat, lng = lng))) },
+                    modifier = Modifier.fillMaxSize(),
                 )
+                SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp)) { Snackbar(it) }
             }
-            is Screen.IconPicker -> {
-                val formViewModel = viewModel(key = "group-form-${screen.form.instance}") {
-                    container.newGroupFormViewModel(screen.form.groupId)
+            panelStack.lastOrNull()?.let { screen ->
+                VerticalDivider()
+                Surface(
+                    modifier = Modifier.width(panelWidth).fillMaxHeight(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
+                    PanelScreen(container, screen, navigate, goBack, unsupported, showMessage)
                 }
-                IconPickerScreen(
-                    currentIconKey = screen.currentIconKey,
-                    onIconSelected = { key ->
-                        formViewModel.onIconChange(key)
-                        goBack()
-                    },
-                    onNavigateBack = goBack,
-                )
-            }
-            is Screen.RouteDetail -> {
-                val viewModel = viewModel(key = "route-detail-${screen.routeId}") {
-                    container.newRouteDetailViewModel(screen.routeId)
-                }
-                RouteDetailScreen(
-                    onNavigateBack = goBack,
-                    onNavigateToEdit = { routeId -> navigate(Screen.RouteEdit(routeId)) },
-                    viewModel = viewModel,
-                )
-            }
-            is Screen.RouteEdit -> {
-                val viewModel = viewModel(key = "route-edit-${screen.routeId}") { container.newRouteFinalizeViewModel() }
-                RouteFinalizeScreen(
-                    routeId = screen.routeId,
-                    isLibraryEdit = true,
-                    onDone = goBack,
-                    viewModel = viewModel,
-                )
-            }
-            is Screen.PoiDetail -> DesktopPoiScreen(
-                container = container,
-                args = screen.args,
-                onNavigateBack = goBack,
-                onAddToPlan = screen.fromSearch?.let { search ->
-                    { destination ->
-                        container.searchViewModels[search.instance]?.addDestinationFromDetail(destination)
-                        goBack()
-                    }
-                },
-                onUnsupported = unsupported,
-            )
-            is Screen.Search -> {
-                val uriHandler = LocalUriHandler.current
-                val viewModel = viewModel(key = "search-${screen.instance}") {
-                    container.newSearchViewModel(screen.planId).also { container.searchViewModels[screen.instance] = it }
-                }
-                LaunchedEffect(viewModel) {
-                    viewModel.results.collect { results ->
-                        if (results.isNotEmpty()) AppLog.d("DesktopApp", "Search results: ${results.joinToString { it.poi.name }}")
-                    }
-                }
-                SearchNPlanScreen(
-                    onNavigateBack = goBack,
-                    onOpenDetail = { type, id -> navigate(Screen.PoiDetail(PoiScreenArgs(type = type, id = id), fromSearch = screen)) },
-                    viewModel = viewModel,
-                    onNavigateTo = { lat, lng -> uriHandler.openUri(googleMapsDirections(listOf(lat to lng))) },
-                    onNavigateAll = { destinations -> uriHandler.openUri(googleMapsDirections(destinations.map { it.lat to it.lng })) },
-                )
             }
         }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp)) { Snackbar(it) }
+    }
+}
+
+@Composable
+private fun FrameWindowScope.PanelScreen(
+    container: AppContainer,
+    screen: Screen,
+    navigate: (Screen) -> Unit,
+    goBack: () -> Unit,
+    unsupported: () -> Unit,
+    showMessage: (String) -> Unit,
+) {
+    when (screen) {
+        Screen.Library -> DesktopLibraryScreen(
+            container = container,
+            onNavigateBack = goBack,
+            onEditPoi = { poiId -> navigate(Screen.PoiDetail(PoiScreenArgs(type = "poi", id = poiId))) },
+            onCreateGroup = { navigate(Screen.GroupForm(groupId = null)) },
+            onEditGroup = { groupId -> navigate(Screen.GroupForm(groupId)) },
+            onEditRoute = { routeId -> navigate(Screen.RouteEdit(routeId)) },
+            onOpenPlan = { planId -> navigate(Screen.Search(planId)) },
+            onUnsupported = unsupported,
+            showMessage = showMessage,
+        )
+        is Screen.GroupForm -> {
+            val viewModel = viewModel(key = "group-form-${screen.instance}") {
+                container.newGroupFormViewModel(screen.groupId)
+            }
+            GroupFormScreen(
+                onNavigateBack = goBack,
+                onNavigateToIconPicker = { key -> navigate(Screen.IconPicker(screen, key)) },
+                viewModel = viewModel,
+            )
+        }
+        is Screen.IconPicker -> {
+            val formViewModel = viewModel(key = "group-form-${screen.form.instance}") {
+                container.newGroupFormViewModel(screen.form.groupId)
+            }
+            IconPickerScreen(
+                currentIconKey = screen.currentIconKey,
+                onIconSelected = { key ->
+                    formViewModel.onIconChange(key)
+                    goBack()
+                },
+                onNavigateBack = goBack,
+            )
+        }
+        is Screen.RouteDetail -> {
+            val viewModel = viewModel(key = "route-detail-${screen.routeId}") {
+                container.newRouteDetailViewModel(screen.routeId)
+            }
+            RouteDetailScreen(
+                onNavigateBack = goBack,
+                onNavigateToEdit = { routeId -> navigate(Screen.RouteEdit(routeId)) },
+                viewModel = viewModel,
+            )
+        }
+        is Screen.RouteEdit -> {
+            val viewModel = viewModel(key = "route-edit-${screen.routeId}") { container.newRouteFinalizeViewModel() }
+            RouteFinalizeScreen(
+                routeId = screen.routeId,
+                isLibraryEdit = true,
+                onDone = goBack,
+                viewModel = viewModel,
+            )
+        }
+        is Screen.PoiDetail -> DesktopPoiScreen(
+            container = container,
+            args = screen.args,
+            onNavigateBack = goBack,
+            onAddToPlan = screen.fromSearch?.let { search ->
+                { destination ->
+                    container.searchViewModels[search.instance]?.addDestinationFromDetail(destination)
+                    goBack()
+                }
+            },
+            onUnsupported = unsupported,
+        )
+        is Screen.Search -> {
+            val uriHandler = LocalUriHandler.current
+            val viewModel = viewModel(key = "search-${screen.instance}") {
+                container.newSearchViewModel(screen.planId).also { container.searchViewModels[screen.instance] = it }
+            }
+            LaunchedEffect(viewModel) {
+                viewModel.results.collect { results ->
+                    if (results.isNotEmpty()) AppLog.d("DesktopApp", "Search results: ${results.joinToString { it.poi.name }}")
+                }
+            }
+            SearchNPlanScreen(
+                onNavigateBack = goBack,
+                onOpenDetail = { type, id -> navigate(Screen.PoiDetail(PoiScreenArgs(type = type, id = id), fromSearch = screen)) },
+                viewModel = viewModel,
+                onNavigateTo = { lat, lng -> uriHandler.openUri(googleMapsDirections(listOf(lat to lng))) },
+                onNavigateAll = { destinations -> uriHandler.openUri(googleMapsDirections(destinations.map { it.lat to it.lng })) },
+            )
+        }
     }
 }
 

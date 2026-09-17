@@ -29,6 +29,7 @@ dependencies {
     implementation(project(":sharedUi"))
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
+    implementation(compose.materialIconsExtended)
     implementation(libs.maplibre.compose)
     runtimeOnly("org.maplibre.compose:$mapRuntime:${libs.versions.maplibreCompose.get()}")
     implementation(libs.kotlinx.coroutines.swing)

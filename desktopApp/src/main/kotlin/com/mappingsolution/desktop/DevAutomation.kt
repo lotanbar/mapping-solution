@@ -19,7 +19,7 @@ import javax.swing.SwingUtilities
  * Input is dispatched as AWT events inside this process, so automated tests never move the
  * real mouse cursor or steal focus from whatever the user is doing on the same machine.
  * Endpoints (localhost only):
- * - `GET /info` → window size in AWT units and the display scale
+ * - `GET /info` → window size in AWT units, the display scale and the side panel's screen
  * - `GET /click?x=&y=` → left click at content-pane coordinates (AWT units)
  * - `GET /clickFeature?kind=poi|route&name=` → left click on a named POI or route on the map
  * - `GET /type?text=` → types text into the focused Compose text field
@@ -32,6 +32,10 @@ internal object DevAutomation {
     /** Set by the map screen: projects a named feature to map-relative logical pixels. */
     @Volatile
     var featureLocator: ((kind: String, name: String) -> DpOffset?)? = null
+
+    /** The screen shown in the side panel, or `closed`. */
+    @Volatile
+    var panelState: String = "closed"
 
     /** Set by the map screen: animates the camera to a position. */
     @Volatile
@@ -47,7 +51,7 @@ internal object DevAutomation {
         server.createContext("/info") { exchange ->
             val root = rootComponent(window)
             val scale = window.graphicsConfiguration.defaultTransform.scaleX
-            respond(exchange, "width=${root.width} height=${root.height} scale=$scale")
+            respond(exchange, "width=${root.width} height=${root.height} scale=$scale panel=$panelState")
         }
         server.createContext("/tree") { exchange ->
             val out = StringBuilder()
