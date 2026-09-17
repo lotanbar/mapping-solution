@@ -74,7 +74,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Deb, TargetFormat.Rpm)
             packageName = "MappingSolution"
-            packageVersion = "1.0.0"
+            packageVersion = "1.4.0"
             modules("java.prefs", "java.net.http", "java.sql", "jdk.crypto.ec", "jdk.httpserver")
         }
     }
