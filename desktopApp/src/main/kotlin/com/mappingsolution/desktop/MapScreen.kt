@@ -68,7 +68,7 @@ private sealed interface Selection {
 
 @OptIn(FlowPreview::class)
 @Composable
-internal fun MapScreen(container: AppContainer, onOpenLibrary: () -> Unit) {
+internal fun MapScreen(container: AppContainer, onOpenLibrary: () -> Unit, onOpenPoi: (String) -> Unit) {
     val groups by container.groupRepository.observeAll().collectAsState(emptyList())
     val pois by container.poiRepository.observeAll().collectAsState(emptyList())
     val routes by container.routeRepository.observeAll().collectAsState(emptyList())
@@ -208,11 +208,14 @@ internal fun MapScreen(container: AppContainer, onOpenLibrary: () -> Unit) {
                     Switch(checked = hillshade, onCheckedChange = container.mapLayersState::setHillshadeVisible)
                 }
                 when (val selected = selection) {
-                    is Selection.PoiSelection -> SelectionDetails(
-                        title = selected.poi.name,
-                        subtitle = groups.find { it.id == selected.poi.groupId }?.name ?: "No group",
-                        body = selected.poi.description,
-                    )
+                    is Selection.PoiSelection -> {
+                        SelectionDetails(
+                            title = selected.poi.name,
+                            subtitle = groups.find { it.id == selected.poi.groupId }?.name ?: "No group",
+                            body = selected.poi.description,
+                        )
+                        Button(onClick = { onOpenPoi(selected.poi.id) }) { Text("Details") }
+                    }
                     is Selection.RouteSelection -> SelectionDetails(
                         title = selected.route.name,
                         subtitle = "%.2f km".format(selected.route.distanceMeters / 1000),

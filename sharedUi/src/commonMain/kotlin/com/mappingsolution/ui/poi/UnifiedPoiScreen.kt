@@ -19,6 +19,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -75,6 +76,8 @@ fun UnifiedPoiScreen(
     onCreateGroup: () -> Unit = {},
     /** Reads an audio file's duration; platforms without a decoder return null. */
     audioDuration: (String) -> Long? = { null },
+    /** Platforms without a system back gesture (desktop) show an explicit back button. */
+    showBackButton: Boolean = false,
 ) {
     val state by viewModel.state.collectAsState()
     val groups by viewModel.groups.collectAsState()
@@ -111,7 +114,15 @@ fun UnifiedPoiScreen(
         )
     }
 
-    Scaffold { padding ->
+    Scaffold(
+        topBar = {
+            if (showBackButton) {
+                IconButton(onClick = ::handleBack, modifier = Modifier.padding(4.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+            }
+        },
+    ) { padding ->
         when {
             state.isLoading -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()

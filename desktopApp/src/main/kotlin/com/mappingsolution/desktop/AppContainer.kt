@@ -22,6 +22,8 @@ import com.mappingsolution.data.util.ApiKeys
 import com.mappingsolution.data.util.AppLog
 import com.mappingsolution.data.util.StorageManager
 import com.mappingsolution.ui.library.LibraryViewModel
+import com.mappingsolution.ui.poi.PoiScreenArgs
+import com.mappingsolution.ui.poi.UnifiedPoiViewModel
 import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -59,6 +61,16 @@ internal class AppContainer {
     val mapLayersState = MapLayersState(mapStylePreference, hillshadePreference, rasterLayerRepository)
 
     val libraryJobs = DesktopLibraryJobs(importRepository, recordingRepository, rasterLayerRepository, storageManager)
+
+    fun newPoiViewModel(args: PoiScreenArgs) = UnifiedPoiViewModel(
+        poiRepository = poiRepository,
+        bulkPoiRepository = bulkPoiRepository,
+        groupRepository = groupRepository,
+        osmPoiRepository = osmPoiRepository,
+        storageManager = storageManager,
+        args = args,
+        openPhoto = { path -> File(path).inputStream() },
+    )
 
     fun newLibraryViewModel() = LibraryViewModel(
         groupRepository, poiRepository, routeRepository, planRepository, exportRepository,

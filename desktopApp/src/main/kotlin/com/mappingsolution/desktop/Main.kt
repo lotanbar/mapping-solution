@@ -1,6 +1,8 @@
 package com.mappingsolution.desktop
 
 import androidx.compose.material3.MaterialTheme
+import coil3.SingletonImageLoader
+import com.mappingsolution.ui.image.AppImageLoader
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -14,6 +16,7 @@ import org.maplibre.compose.desktop.ProvideMapPresentationHost
 import org.maplibre.compose.desktop.rememberAwtComposeMapPresentationHost
 
 fun main() = application {
+    SingletonImageLoader.setSafe { context -> AppImageLoader.create(context) }
     val container = remember { AppContainer() }
     val automated = System.getenv("MS_AUTOMATION_PORT") != null
     val windowState = remember {
