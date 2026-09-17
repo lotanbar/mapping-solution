@@ -27,7 +27,15 @@ kotlin {
             api(compose.components.resources)
             api(libs.jetbrains.lifecycle.viewmodel.compose)
             implementation(libs.compose.ui.backhandler)
+            api(libs.coil3.compose)
+            implementation(libs.coil3.network.okhttp)
             implementation(libs.kotlinx.coroutines.core)
+        }
+        val desktopTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+                implementation(compose.desktop.currentOs)
+            }
         }
     }
 }

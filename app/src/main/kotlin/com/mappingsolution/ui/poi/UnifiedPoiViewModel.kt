@@ -229,7 +229,7 @@ class UnifiedPoiViewModel @Inject constructor(
         val sourceZipPath = group?.sourceZipPath
         return when {
             sourceZipPath != null -> supported.map {
-                com.mappingsolution.data.image.ZipImageFetcher.uriFor(sourceZipPath, it).toString()
+                com.mappingsolution.ui.image.ZipImageFetcher.uriFor(sourceZipPath, it)
             }
             else -> {
                 val dir = storageManager.getPoiMediaDir(poi.name, poi.id)

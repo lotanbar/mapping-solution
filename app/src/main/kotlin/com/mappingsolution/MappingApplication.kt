@@ -7,10 +7,8 @@ import android.os.Build
 import android.util.Log
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
-import coil.Coil
-import coil.ImageLoader
-import okhttp3.Interceptor
-import com.mappingsolution.data.image.ZipImageFetcher
+import coil3.SingletonImageLoader
+import com.mappingsolution.ui.image.AppImageLoader
 import com.mappingsolution.data.map.MbTilesInterceptor
 import com.mappingsolution.data.migration.LegacyDbMigration
 import com.mappingsolution.data.migration.StorageV2Migration
@@ -26,7 +24,6 @@ import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.maplibre.android.module.http.HttpRequestUtil
 import java.io.File
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -52,31 +49,8 @@ class MappingApplication : Application(), Configuration.Provider {
         // MapLibre must be initialized before anything that touches its static context
         org.maplibre.android.MapLibre.getInstance(this)
 
-        // Configure Coil with a User-Agent so Wikimedia Commons doesn't 403 image downloads
-        Coil.setImageLoader(
-            ImageLoader.Builder(this)
-                .okHttpClient(
-                    OkHttpClient.Builder()
-                        .connectTimeout(15, TimeUnit.SECONDS)
-                        .readTimeout(30, TimeUnit.SECONDS)
-                        .callTimeout(40, TimeUnit.SECONDS)
-                        .addInterceptor(Interceptor { chain ->
-                            chain.proceed(
-                                chain.request().newBuilder()
-                                    .header(
-                                        "User-Agent",
-                                        "mapping-solution/1.0 (https://github.com/lotanbar/mapping-solution)",
-                                    )
-                                    .build()
-                            )
-                        })
-                        .build()
-                )
-                .components {
-                    add(ZipImageFetcher.Factory())
-                }
-                .build()
-        )
+        // Shared Coil loader: Wikimedia User-Agent plus zip-backed POI images.
+        SingletonImageLoader.setSafe { context -> AppImageLoader.create(context) }
 
         // Register custom OkHttp client so MapLibre serves local MBTiles tiles
         HttpRequestUtil.setOkHttpClient(

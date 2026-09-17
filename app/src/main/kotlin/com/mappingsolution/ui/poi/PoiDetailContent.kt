@@ -33,8 +33,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
+import coil3.compose.AsyncImage
+import coil3.compose.LocalPlatformContext
+import coil3.request.ImageRequest
+import coil3.request.crossfade
+import com.mappingsolution.ui.image.ZipImageFetcher
 import com.mappingsolution.data.model.MediaItem
 import com.mappingsolution.data.model.MediaType
 import java.io.File
@@ -147,8 +150,8 @@ fun PoiMediaPager(
                     }
                     else -> {
                         AsyncImage(
-                            model = ImageRequest.Builder(context)
-                                .data(if (item.path.startsWith("http") || item.path.startsWith("zip://")) Uri.parse(item.path) else File(item.path))
+                            model = ImageRequest.Builder(LocalPlatformContext.current)
+                                .data(if (item.path.startsWith("http") || ZipImageFetcher.isZipUri(item.path)) item.path else File(item.path))
                                 .crossfade(true)
                                 .build(),
                             contentDescription = null,

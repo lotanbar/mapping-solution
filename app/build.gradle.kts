@@ -78,9 +78,6 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.5.0")
     implementation("androidx.media3:media3-common:1.5.0")
 
-    // Coil
-    implementation("io.coil-kt:coil-compose:2.7.0")
-
     // Hilt
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)

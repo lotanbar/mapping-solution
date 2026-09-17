@@ -30,7 +30,8 @@ import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.media3.common.util.UnstableApi
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
+import com.mappingsolution.ui.image.ZipImageFetcher
 import com.mappingsolution.data.model.MediaItem
 import com.mappingsolution.data.model.MediaType
 import com.mappingsolution.data.model.MediaUtils
@@ -112,7 +113,7 @@ fun ZoomableImage(
             },
     ) {
         AsyncImage(
-            model = if (path.startsWith("http") || path.startsWith("zip://")) Uri.parse(path) else File(path),
+            model = if (path.startsWith("http") || ZipImageFetcher.isZipUri(path)) path else File(path),
             contentDescription = null,
             modifier = Modifier
                 .fillMaxSize()
