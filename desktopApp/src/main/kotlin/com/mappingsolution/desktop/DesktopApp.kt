@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.FrameWindowScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mappingsolution.data.util.AppLog
+import com.mappingsolution.ui.detail.RouteDetailScreen
 import com.mappingsolution.ui.image.ZipImageFetcher
 import com.mappingsolution.ui.library.GroupFormScreen
 import com.mappingsolution.ui.library.IconPickerScreen
@@ -46,6 +47,7 @@ internal sealed interface Screen {
     data class GroupForm(val groupId: String?, val instance: Long = System.nanoTime()) : Screen
     data class IconPicker(val form: GroupForm, val currentIconKey: String) : Screen
     data class RouteEdit(val routeId: String) : Screen
+    data class RouteDetail(val routeId: String) : Screen
 }
 
 @Composable
@@ -75,6 +77,9 @@ internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
                 onOpenLibrary = { navigate(Screen.Library) },
                 onOpenSearch = { navigate(Screen.Search(planId = null)) },
                 onOpenPoi = { type, id -> navigate(Screen.PoiDetail(PoiScreenArgs(type = type, id = id))) },
+                onOpenRoute = { routeId -> navigate(Screen.RouteDetail(routeId)) },
+                // A null ID opens the POI screen in creation mode at the given point.
+                onCreatePoi = { lat, lng -> navigate(Screen.PoiDetail(PoiScreenArgs(type = null, id = null, lat = lat, lng = lng))) },
             )
             Screen.Library -> DesktopLibraryScreen(
                 container = container,
@@ -108,6 +113,16 @@ internal fun FrameWindowScope.DesktopApp(container: AppContainer) {
                         goBack()
                     },
                     onNavigateBack = goBack,
+                )
+            }
+            is Screen.RouteDetail -> {
+                val viewModel = viewModel(key = "route-detail-${screen.routeId}") {
+                    container.newRouteDetailViewModel(screen.routeId)
+                }
+                RouteDetailScreen(
+                    onNavigateBack = goBack,
+                    onNavigateToEdit = { routeId -> navigate(Screen.RouteEdit(routeId)) },
+                    viewModel = viewModel,
                 )
             }
             is Screen.RouteEdit -> {

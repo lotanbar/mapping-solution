@@ -24,6 +24,7 @@ import com.mappingsolution.data.recording.processing.OsmRoadCache
 import com.mappingsolution.data.util.ApiKeys
 import com.mappingsolution.data.util.AppLog
 import com.mappingsolution.data.util.StorageManager
+import com.mappingsolution.ui.detail.RouteDetailViewModel
 import com.mappingsolution.ui.library.GroupFormViewModel
 import com.mappingsolution.ui.library.LibraryViewModel
 import com.mappingsolution.ui.recording.RouteFinalizeViewModel
@@ -94,6 +95,8 @@ internal class AppContainer {
     )
 
     fun newGroupFormViewModel(groupId: String?) = GroupFormViewModel(groupRepository, groupId)
+
+    fun newRouteDetailViewModel(routeId: String) = RouteDetailViewModel(routeRepository, routeId)
 
     fun newRouteFinalizeViewModel() = RouteFinalizeViewModel(routeRepository, libraryJobs)
 

@@ -99,6 +99,8 @@ internal fun MapScreen(
     onOpenLibrary: () -> Unit,
     onOpenSearch: () -> Unit,
     onOpenPoi: (type: String, id: String) -> Unit,
+    onOpenRoute: (routeId: String) -> Unit,
+    onCreatePoi: (lat: Double, lng: Double) -> Unit,
 ) {
     val groups by container.groupRepository.observeAll().collectAsState(emptyList())
     val pois by container.poiRepository.observeAll().collectAsState(emptyList())
@@ -284,6 +286,10 @@ internal fun MapScreen(
                     Button(onClick = onOpenLibrary) { Text("Library") }
                     Button(onClick = onOpenSearch) { Text("Search & Plan") }
                 }
+                Button(onClick = {
+                    val target = mapState.cameraPosition.target
+                    onCreatePoi(target.latitude, target.longitude)
+                }) { Text("New POI at map center") }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     MapStyle.entries.forEach { option ->
                         FilterChip(
@@ -307,11 +313,14 @@ internal fun MapScreen(
                         )
                         Button(onClick = { onOpenPoi(selected.type, selected.poi.id) }) { Text("Details") }
                     }
-                    is Selection.RouteSelection -> SelectionDetails(
-                        title = selected.route.name,
-                        subtitle = "%.2f km".format(selected.route.distanceMeters / 1000),
-                        body = selected.route.description,
-                    )
+                    is Selection.RouteSelection -> {
+                        SelectionDetails(
+                            title = selected.route.name,
+                            subtitle = "%.2f km".format(selected.route.distanceMeters / 1000),
+                            body = selected.route.description,
+                        )
+                        Button(onClick = { onOpenRoute(selected.route.id) }) { Text("Details") }
+                    }
                     null -> Text("Click a POI or route for details", style = MaterialTheme.typography.bodySmall)
                 }
             }
